@@ -1,0 +1,21 @@
+---
+- hosts: ibmi
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+
+  vars_files:
+    mop_variables.yml
+    
+  tasks:
+    
+    - name: send a mail to {{ email }}
+      ibmi_cl_command:
+        cmd: sndsmtpemm RCP(('{{ email }}'))
+                        SUBJECT('test envoi')
+                        NOTE(ludo)
+                        ATTACH('/home/ludo/single_group.xls')
+        joblog: false
+      register: send_mail
+    - debug:
+       var: send_mail

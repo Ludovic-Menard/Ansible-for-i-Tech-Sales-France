@@ -1,0 +1,34 @@
+---
+- hosts: ibmi
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+    
+  vars: 
+    user_profile: ludo
+
+  tasks:
+    
+    - name: create user profile {{user_profile}}
+      ibmi_user_and_group:
+        operation: 'create'
+        user: '{{user_profile}}'
+        user_class: '*SECOFR'
+      register: user_result
+    - debug:
+       var: user_result
+
+    - name: display user profile {{user_profile}}
+      ibmi_user_and_group:
+        operation: 'display'
+        user: '{{user_profile}}'
+
+    - name: create IFS directory for profile {{ user_profile }}
+      file:
+        path: /home/{{ user_profile }}
+        state: directory
+        owner: "{{ user_profile }}"
+        
+      register: ifs_directory
+    - debug:
+       var: ifs_directory  

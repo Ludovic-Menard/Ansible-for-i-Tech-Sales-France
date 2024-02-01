@@ -1,0 +1,27 @@
+- hosts: all
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+
+  vars:
+    become_user_name: null
+    become_user_password: null
+
+  tasks:
+    - name: security
+      ibmi_sql_query:
+        sql: SELECT * from qsys2.security_info;
+                  
+        become_user: '{{ become_user_name }}'
+        become_user_password: '{{ become_user_password }}'
+      register: security
+      tags: security
+      ignore_errors: true
+    - name: print
+      debug:
+        results: "{{ security.row }}"
+    - name: copy
+      copy:
+        content: "{{ security.row | from_yaml }}"
+        dest: "/home/menard/ludo.csv"
+  

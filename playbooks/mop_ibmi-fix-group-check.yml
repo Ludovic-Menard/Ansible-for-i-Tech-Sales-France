@@ -1,0 +1,42 @@
+# Copyright (c) I.BM Corporation 2019, 2020
+# Apache License, Version 2.0 (see https://opensource.org/licenses/Apache-2.0)
+
+#ibmi-fix-repo-sample.yml 
+#The sample file is to provide an example about how to manipulate the PTF database
+---
+- hosts: all
+  gather_facts: false
+  collections:
+   - ibm.power_ibmi
+
+  vars:
+    user_profile: ludo
+    become_user_name: null
+    become_user_password: null
+
+  tasks:
+    - name: query_a_single_group
+      ibmi_fix_group_check:
+        groups:
+          - "SF99737"
+      register: single_group
+      tags: single_group
+
+    - name: display_a_single_group
+      debug:
+       # msg: "{{ single_group }}"
+       var: single_group
+       #var: single_group
+
+    - name: template CSV
+      template:
+        src: single_group_csv.j2
+        dest: /home/{{ user_profile }}/single_group.xls
+    
+    - name: Return ibmi_facts
+      ibm.power_ibmi.ibmi_facts:
+
+    - name: showing values
+      debug:
+        msg: "{{ ansible_facts.group_ptf_info }}"
+

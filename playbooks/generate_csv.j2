@@ -1,0 +1,6 @@
+{% set s_no = namespace(value=1) %}
+NO,Capacity,disk_type,Percent_used,Unit_number
+{% for each in disk_status.row %}
+{{s_no.value}},{{each.CAPACITY}},{{each.DISK_TYPE}},{{each.PERCENT_USED}},{{each.UNIT_NUMBER}}
+{% set s_no.value = s_no.value + 1 %}
+{% endfor %} 

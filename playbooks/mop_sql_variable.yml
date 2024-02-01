@@ -1,0 +1,26 @@
+# Copyright (c) IBM Corporation 2019, 2020
+# Apache License, Version 2.0 (see https://opensource.org/licenses/Apache-2.0)
+---
+- hosts: all
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+
+  vars:
+    become_user_name: null
+    become_user_password: null
+
+  tasks:
+    - name: IFS size
+      ibmi_sql_query:
+        sql: "SELECT path_name, object_type, data_size, object_owner
+                     FROM TABLE(qsys2.IFS_OBJECT_STATISTICS(start_path_name => '/home/{{ifs}}',subtree_directories => 'YES'))
+   ORDER BY data_size DESC LIMIT 10;"
+                  
+        become_user: '{{ become_user_name }}'
+        become_user_password: '{{ become_user_password }}'
+      register: ifs_status
+      tags: ifs_status
+      ignore_errors: true
+    - debug:
+       var: ifs_status

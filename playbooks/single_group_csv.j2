@@ -1,0 +1,6 @@
+{% set s_no = namespace(value=1) %}
+apar,date,product,ptf_id
+{% for each in single_group.group_info[0].ptf_list %}
+{{each.apar}},{{each.date}},{{each.product}},{{each.ptf_id}}
+{% set s_no.value = s_no.value + 1 %}
+{% endfor %} 

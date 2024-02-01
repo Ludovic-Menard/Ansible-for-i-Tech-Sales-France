@@ -1,0 +1,6 @@
+{% set s_no = namespace(value=1) %}
+Backup Time,Backup ID,Recoverable,Copy Sets,Last Result,Expiration
+{% for each in csm_result.backups %}
+{{each.Taken}},{{each.ID}},{{each.Recoverable}},{{each.Copy_Sets}},{{each.Result}},{{each.Expires}}
+{% set s_no.value = s_no.value + 1 %}
+{% endfor %} 

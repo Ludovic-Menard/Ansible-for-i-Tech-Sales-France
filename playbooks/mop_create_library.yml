@@ -1,0 +1,18 @@
+---
+- hosts: ibmi
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+
+  vars:
+    library: ansible
+    
+  tasks:
+    
+    - name: create {{ library }} library
+      ibmi_cl_command:
+        cmd: crtlib lib({{ library }})
+        joblog: false
+      register: crtlib_result
+    - debug:
+       var: crtlib_result

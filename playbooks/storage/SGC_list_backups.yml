@@ -1,0 +1,25 @@
+---
+- name: Get valid backup list, most recent first
+  hosts: localhost
+  vars:
+    csm_server:
+      hostname: 10.3.18.98
+      port: 9559
+      username: Ludovic
+      password: pass4Ludo
+    sgc_session: "IBMi_iASP1_FLASHSYSTEM5200"
+
+  tasks:
+    - name: Get valid backup list for Session {{ sgc_session }}, most recent first
+      ibm_sgc_get_backups:
+        hostname: "{{ csm_server.hostname }}"
+        username: "{{ csm_server.username }}"
+        password: "{{ csm_server.password }}"
+        session: "{{ sgc_session }}"
+        only_valid: yes
+        newest_first: yes
+      no_log: true
+      register: csm_result
+
+    - debug:
+        var: csm_result

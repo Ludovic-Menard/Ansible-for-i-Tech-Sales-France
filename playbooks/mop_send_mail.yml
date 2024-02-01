@@ -1,0 +1,21 @@
+---
+- hosts: ibmi
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+
+  vars:
+    email: ludovic_menard@fr.ibm.com
+    
+  tasks:
+    
+    - name: send a mail to {{ email }}
+      ibmi_cl_command:
+        cmd: sndsmtpemm RCP(('{{ email }}'))
+                        SUBJECT('test envoi')
+                        NOTE(ludo)
+                        ATTACH('/home/ludo/disk_list.xls')
+        joblog: false
+      register: send_mail
+    - debug:
+       var: send_mail
