@@ -5,7 +5,7 @@
     - ibm.power_ibmi
     
   vars: 
-    user_profile: {{ user_profile }}
+    user_profile: {{user_profile}}
 
   tasks:
     
