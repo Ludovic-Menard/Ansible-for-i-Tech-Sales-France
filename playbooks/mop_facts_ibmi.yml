@@ -1,0 +1,4 @@
+- hosts: ibmi
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
