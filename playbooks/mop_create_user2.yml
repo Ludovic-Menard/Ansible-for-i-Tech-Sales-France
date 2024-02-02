@@ -9,13 +9,16 @@
       prompt: Profile to create ?
       private: false
 
+    - name: user_class
+      prompt: What is the user class ? *secofr *user 
+      private: false
   tasks:
     
     - name: create user profile {{user_profile}}
       ibmi_user_and_group:
         operation: 'create'
         user: '{{user_profile}}'
-        user_class: '*SECOFR'
+        user_class: '{{user_class}}'
       register: user_result
     - debug:
        var: user_result
