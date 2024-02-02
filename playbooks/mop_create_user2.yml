@@ -10,11 +10,11 @@
       private: false
 
     - name: user_class
-      prompt: What is the user class ? *secofr *user 
+      prompt: What is the user class ? *SECOFR *USER 
       private: false
   tasks:
     
-    - name: create user profile {{user_profile}}
+    - name: create user profile {{user_profile}} user class {{user_class}}
       ibmi_user_and_group:
         operation: 'create'
         user: '{{user_profile}}'

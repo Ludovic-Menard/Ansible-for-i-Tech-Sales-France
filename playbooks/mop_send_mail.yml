@@ -14,7 +14,7 @@
         cmd: sndsmtpemm RCP(('{{ email }}'))
                         SUBJECT('test envoi')
                         NOTE(ludo)
-                        ATTACH('/home/ludo/disk_list.xls')
+                        ATTACH('/home/ludo/ptfs_list.xls')
         joblog: false
       register: send_mail
     - debug:
