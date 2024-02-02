@@ -2,3 +2,6 @@
   gather_facts: false
   collections:
     - ibm.power_ibmi
+
+- name: Return ibmi_facts
+  ibm.power_ibmi.ibmi_facts:
