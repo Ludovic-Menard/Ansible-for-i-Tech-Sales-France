@@ -4,8 +4,11 @@
   collections:
     - ibm.power_ibmi
     
-  vars: 
-    user_profile: "{{user_profile}}"
+  #vars: 
+  #  user_profile: "{{user_profile}}"
+  vars_prompt:
+    - name: user_profile
+      prompt: Profile to create ?
 
   tasks:
     
