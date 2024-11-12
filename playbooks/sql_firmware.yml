@@ -1,0 +1,32 @@
+- hosts: all
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+
+  vars:
+    user_profile: ludo
+    become_user_name: null
+    become_user_password: null
+
+    #vars_prompt:
+    #- name: SQL_request
+    #  prompt: SQL request ?
+    #  private: false
+
+  tasks:
+    - name: SQL status
+      ibmi_sql_query:
+        sql: "select * from systools.firmware_currency;"
+
+        become_user: '{{ become_user_name }}'
+        become_user_password: '{{ become_user_password }}'
+      register: sql_status
+      tags: sql_status
+      ignore_errors: true
+    - debug:
+       var: sql_status
+
+    - name: create result to file sql_request.txt
+      copy:
+        content: "{{ sql_status.row }}"
+        dest: /home/{{ user_profile }}/sql_request.txt
