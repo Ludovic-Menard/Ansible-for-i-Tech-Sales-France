@@ -1,7 +1,17 @@
 - hosts: ibmi
-  gather_facts: false
+  gather_facts: true
   collections:
     - ibm.power_ibmi
   tasks:
     - name: Return ibmi_facts
       ibmi_facts:
+      register: ibmi_facts
+      tags: ibmi_facts
+    - debug:
+            var: ibmi_facts
+    - name: create result to file dns_info.txt
+      copy:
+      #content: "{{ ibmi_facts.ansible_facts.group_ptf_info }}"
+      #dest: /home/ludo/group_ptf_info.txt
+        content: "{{ ibmi_facts.ansible_facts.dns_info }}"
+        dest: /home/ludo/dns_info.txt
