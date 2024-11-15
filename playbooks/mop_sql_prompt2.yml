@@ -12,7 +12,10 @@
     - name: SQL_request
       prompt: SQL request ?
       private: false
-
+    - name: Result_file
+      prompt: Result file ?
+      private: false
+  
   tasks:
     - name: SQL status
       ibmi_sql_query:
@@ -26,7 +29,7 @@
     - debug:
        var: sql_status
 
-    - name: create result to file sql_request.txt
+    - name: create result to file {{ result_file }}.txt
       copy:
         content: "{{ sql_status.row }}"
-        dest: /home/{{ user_profile }}/sql_request.txt
+        dest: /home/{{ user_profile }}/{{ result_file }}.txt
