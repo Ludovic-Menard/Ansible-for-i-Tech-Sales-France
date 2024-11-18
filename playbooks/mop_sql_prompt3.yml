@@ -32,5 +32,5 @@
     - name: template CSV
       template:
         src: sql_qcustcdt.j2
-        dest: /home/{{ user_profile }}/ptfs_list.xls
+        dest: /home/{{ user_profile }}/{{ result_file }}.xls
 
