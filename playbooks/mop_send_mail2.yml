@@ -1,0 +1,26 @@
+---
+- hosts: ibmi
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+
+  vars_files:
+    mop_variables.yml
+
+  vars_prompt:
+    - name: file_mail
+      prompt: File to send by mail ?
+      private: false
+      
+  tasks:
+    
+    - name: send a mail to {{ email }}
+      ibmi_cl_command:
+        cmd: sndsmtpemm RCP(('{{ email }}'))
+                        SUBJECT('File to mail')
+                        NOTE(ludo)
+                        ATTACH('/home/ludo/{{ file_mail }}.xls')
+        joblog: false
+      register: send_mail
+    - debug:
+       var: send_mail
