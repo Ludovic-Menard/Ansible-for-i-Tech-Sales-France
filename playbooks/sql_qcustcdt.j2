@@ -1,0 +1,6 @@
+{% set s_no = namespace(value=1) %}
+BALDUE,CDTDUE,CDTLMT,CHGCOD,CITY,CUSNUM,INIT,LSTNAM,STATE,STREET,ZIPCOD
+{% for each in sql_status.row %}
+{{each.BALDUE}},{{each.CDTDUE}},{{each.CDTLMT}},{{each.CHGCOD}},{{each.CITY}},{{each.CUSNUM}},{{each.INIT}},{{each.LSTNAM}},{{each.STATE}},{{each.STREET}},{{each.ZIPCOD}}
+{% set s_no.value = s_no.value + 1 %}
+{% endfor %} 
