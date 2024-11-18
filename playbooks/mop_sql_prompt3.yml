@@ -1,0 +1,36 @@
+- hosts: all
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+
+  vars:
+    user_profile: ludo
+    become_user_name: null
+    become_user_password: null
+
+  vars_prompt:
+    - name: SQL_request
+      prompt: SQL request ?
+      private: false
+    - name: result_file
+      prompt: Result file ?
+      private: false
+  
+  tasks:
+    - name: SQL status
+      ibmi_sql_query:
+        sql: "{{ SQL_request }};"
+
+        become_user: '{{ become_user_name }}'
+        become_user_password: '{{ become_user_password }}'
+      register: sql_status
+      tags: sql_status
+      ignore_errors: true
+    - debug:
+       var: sql_status
+
+    - name: template CSV
+      template:
+        src: sql_qcustcdt.j2
+        dest: /home/{{ user_profile }}/ptfs_list.xls
+
