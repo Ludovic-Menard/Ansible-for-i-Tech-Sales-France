@@ -1,0 +1,44 @@
+---
+- name: Execute Audit Journal Query
+  hosts: ibmi
+  gather_facts: no
+
+  vars:
+    start_date: "2025/09/01 00:00:00"
+    end_date: "2025/09/09 00:00:00"
+    output_dir: "/tmp"
+    csv_filename: "audit_journal_report.csv"
+
+  tasks:
+    - name: Execute SQL query to get audit journal information
+      ibmi_sql_query:
+        sql: |
+          WITH A AS (
+            SELECT *
+              FROM TABLE (
+                SYSTOOLS.AUDIT_JOURNAL_PW(
+                  STARTING_TIMESTAMP => TIMESTAMP_FORMAT(
+                    '{{ start_date }}',
+                    'YYYY/MM/DD HH24:MI:SS'
+                  ),
+                  ENDING_TIMESTAMP => TIMESTAMP_FORMAT(
+                    '{{ end_date }}',
+                    'YYYY/MM/DD HH24:MI:SS'
+                  )
+                )
+              )
+          )
+          SELECT *
+            FROM A
+        expected_rows: -1
+      register: sql_results
+
+    - name: Display results
+      debug:
+        var: sql_results.row
+
+    - name: Create CSV file from results
+      copy:
+        content: "{{ sql_results.row | to_nice_json }}"
+        dest: "{{ output_dir }}/{{ csv_filename }}"
+      delegate_to: localhost
