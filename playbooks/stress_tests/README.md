@@ -8,7 +8,7 @@ Suite de playbooks Ansible pour automatiser les tests de performance sur les sys
 
 ## 📦 Contenu
 
-### Phase 1 - Playbooks de Base (Disponibles)
+### Phase 1 - Playbooks de Base ✅
 
 | Playbook | Description | Usage |
 |----------|-------------|-------|
@@ -16,13 +16,21 @@ Suite de playbooks Ansible pour automatiser les tests de performance sur les sys
 | `run_cpu_stress.yml` | Exécute des tests de stress CPU | Tests de charge processeur |
 | `run_io_stress.yml` | Exécute des tests de stress I/O | Tests de charge disque |
 
-### Phase 2 - Fonctionnalités Avancées (À venir)
+### Phase 2 - Fonctionnalités Avancées ✅
 
-- Orchestrateur de tests avec scénarios prédéfinis
-- Monitoring continu des performances
-- Collecte de baseline avant mise à jour
-- Comparaison automatique avant/après
-- Génération de rapports HTML
+| Playbook | Description | Usage |
+|----------|-------------|-------|
+| `run_monitoring.yml` | Monitoring continu des performances | Collecte métriques temps réel |
+| `run_orchestrator.yml` | Orchestrateur avec scénarios prédéfinis | Tests combinés CPU + I/O |
+| `collect_baseline.yml` | Collecte baseline avant mise à jour | Référence de performance |
+| `compare_results.yml` | Compare baseline vs validation | Analyse des différences |
+| `main_performance_validation.yml` | **Workflow complet automatisé** | **Validation bout-en-bout** |
+
+### Templates
+
+| Template | Description |
+|----------|-------------|
+| `performance_report.html.j2` | Rapport HTML visuel avec graphiques |
 
 ## 🔧 Prérequis
 
@@ -423,14 +431,229 @@ Consultez `vars.yml` pour la liste complète. Principales variables :
 - `cleanup_after_test`: Nettoyer après test (défaut: true)
 - `check_dependencies`: Vérifier dépendances (défaut: true)
 
-## 🔜 Prochaines Fonctionnalités (Phase 2)
+## 🚀 Workflow Complet de Validation (Phase 2)
 
-- ✨ Playbook orchestrateur avec scénarios prédéfinis
-- 📊 Monitoring continu avec graphiques temps réel
-- 📈 Comparaison automatique avant/après avec rapport HTML
-- 📧 Envoi automatique de rapports par email
-- 🎨 Génération de graphiques de performance
-- 🔔 Alertes sur dégradation de performance
+### Playbook Principal : `main_performance_validation.yml`
+
+Ce playbook orchestre automatiquement tout le processus de validation de performance :
+
+```bash
+ansible-playbook -i inventory.ini main_performance_validation.yml
+```
+
+**Workflow en 5 phases :**
+
+1. **Phase 1 - Collecte Baseline** : Capture l'état de performance avant mise à jour
+2. **Phase 2 - Pause** : Temps pour appliquer les PTFs/mises à jour
+3. **Phase 3 - Tests de Validation** : Exécute les tests après mise à jour
+4. **Phase 4 - Comparaison** : Analyse les différences de performance
+5. **Phase 5 - Rapport HTML** : Génère un rapport visuel professionnel
+
+### Utilisation des Playbooks Avancés
+
+#### 1. Monitoring Continu
+
+Surveiller les performances en temps réel pendant les tests :
+
+```bash
+# Monitoring pendant 10 minutes
+ansible-playbook -i inventory.ini run_monitoring.yml \
+  --extra-vars "monitor_duration=600"
+
+# Monitoring continu (arrêt manuel avec Ctrl+C)
+ansible-playbook -i inventory.ini run_monitoring.yml
+```
+
+**Résultat :** Fichier JSONL avec métriques horodatées (CPU, mémoire, disque, réseau)
+
+#### 2. Orchestrateur de Tests
+
+Exécuter des scénarios prédéfinis combinant CPU + I/O + monitoring :
+
+```bash
+# Lister les scénarios disponibles
+ansible-playbook -i inventory.ini run_orchestrator.yml --tags info
+
+# Exécuter un scénario prédéfini
+ansible-playbook -i inventory.ini run_orchestrator.yml \
+  --extra-vars "orchestrator_scenario=demo_standard"
+
+# Scénarios disponibles :
+#   - demo_light      : Test léger (2 min)
+#   - demo_standard   : Test standard (5 min)
+#   - demo_intensive  : Test intensif (10 min)
+#   - cpu_only        : CPU uniquement
+#   - io_only         : I/O uniquement
+#   - full_stress     : Stress complet (15 min)
+```
+
+#### 3. Collecte de Baseline
+
+Capturer l'état de référence avant une mise à jour :
+
+```bash
+# Baseline avec nom personnalisé
+ansible-playbook -i inventory.ini collect_baseline.yml \
+  --extra-vars "baseline_name=before_ptf_SI12345"
+
+# Baseline automatique avec horodatage
+ansible-playbook -i inventory.ini collect_baseline.yml
+```
+
+**Contenu de la baseline :**
+- Informations système (OS, CPU, mémoire)
+- Métriques actuelles (CPU, mémoire, disque, réseau)
+- Tests rapides de performance (30s CPU + 30s I/O)
+
+#### 4. Comparaison des Résultats
+
+Comparer deux baselines pour détecter les changements :
+
+```bash
+ansible-playbook -i inventory.ini compare_results.yml \
+  --extra-vars "baseline_file=results/baseline_before.json validation_file=results/baseline_after.json"
+```
+
+**Analyse automatique :**
+- ✅ Calcul des différences (absolues et pourcentages)
+- ✅ Évaluation selon seuils configurables
+- ✅ Génération de recommandations
+- ✅ Statut global : OK / ATTENTION / DÉGRADÉ
+
+### Workflow Complet Recommandé
+
+#### Scénario : Validation PTF
+
+```bash
+# 1. Déployer les outils (une seule fois)
+ansible-playbook -i inventory.ini deploy_stress_tools.yml
+
+# 2. Workflow complet automatisé
+ansible-playbook -i inventory.ini main_performance_validation.yml
+```
+
+**Le playbook va :**
+1. Collecter la baseline automatiquement
+2. Vous demander d'appliquer les PTFs
+3. Exécuter les tests de validation
+4. Comparer les résultats
+5. Générer un rapport HTML professionnel
+
+**Résultat :** Rapport HTML dans `reports/report_validation_YYYYMMDD_HHMMSS.html`
+
+#### Scénario : Validation en Deux Temps
+
+Si vous préférez contrôler chaque étape :
+
+```bash
+# Étape 1 : Avant la mise à jour
+ansible-playbook -i inventory.ini collect_baseline.yml \
+  --extra-vars "baseline_name=before_ptf_SI12345"
+
+# Étape 2 : Appliquer les PTFs manuellement
+# ... (vos commandes de mise à jour)
+
+# Étape 3 : Après la mise à jour
+ansible-playbook -i inventory.ini main_performance_validation.yml \
+  --tags phase3,phase4,phase5 \
+  --extra-vars "baseline_file=results/baseline_before_ptf_SI12345.json"
+```
+
+### Rapport HTML Généré
+
+Le rapport HTML inclut :
+
+📊 **Résumé Exécutif**
+- Statut global avec code couleur
+- Métriques clés (CPU, mémoire, disque)
+- Changements en pourcentage
+
+📈 **Comparaison Détaillée**
+- Tableaux avant/après
+- Calculs de différences
+- Barres de progression visuelles
+
+⚠️ **Recommandations**
+- Alertes automatiques si dégradation
+- Actions suggérées
+- Seuils configurables
+
+🖥️ **Informations Système**
+- Configuration matérielle
+- Version OS
+- Dates de collecte
+
+**Exemple de visualisation :**
+```
+open reports/report_validation_20241216_143000.html
+```
+
+### Configuration des Seuils d'Alerte
+
+Dans `vars.yml`, ajustez les seuils selon vos besoins :
+
+```yaml
+performance_thresholds:
+  cpu_degradation_warning: 10      # Alerte si CPU +10%
+  cpu_degradation_critical: 20     # Critique si CPU +20%
+  io_degradation_warning: 15       # Alerte si I/O +15%
+  io_degradation_critical: 30      # Critique si I/O +30%
+  memory_increase_warning: 20      # Alerte si mémoire +20%
+  memory_increase_critical: 40     # Critique si mémoire +40%
+```
+
+### Scénarios d'Utilisation Avancés
+
+#### 1. Tests Parallèles sur Plusieurs Serveurs
+
+```bash
+# Tester tous les serveurs du groupe en parallèle
+ansible-playbook -i inventory.ini main_performance_validation.yml \
+  --forks 5
+```
+
+#### 2. Tests Personnalisés
+
+```bash
+# CPU intensif + I/O léger
+ansible-playbook -i inventory.ini run_cpu_stress.yml \
+  --extra-vars "cpu_cores=8 cpu_intensity=extreme cpu_test_duration=600"
+
+ansible-playbook -i inventory.ini run_io_stress.yml \
+  --extra-vars "io_processes=1 io_file_size_mb=50 io_test_duration=300"
+```
+
+#### 3. Monitoring Pendant les Tests
+
+Terminal 1 :
+```bash
+ansible-playbook -i inventory.ini run_monitoring.yml \
+  --extra-vars "monitor_duration=900"
+```
+
+Terminal 2 :
+```bash
+ansible-playbook -i inventory.ini run_orchestrator.yml \
+  --extra-vars "orchestrator_scenario=demo_intensive"
+```
+
+### Analyse des Métriques Collectées
+
+Les fichiers JSONL de monitoring peuvent être analysés :
+
+```bash
+# Afficher toutes les métriques
+cat results/metrics_*.jsonl | jq .
+
+# Extraire uniquement les valeurs CPU
+cat results/metrics_*.jsonl | jq '.cpu.percent'
+
+# Calculer la moyenne CPU
+cat results/metrics_*.jsonl | jq -s 'map(.cpu.percent) | add/length'
+
+# Trouver le pic de mémoire
+cat results/metrics_*.jsonl | jq -s 'map(.memory.percent) | max'
+```
 
 ## 📞 Support
 

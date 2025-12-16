@@ -1,0 +1,281 @@
+---
+# ============================================================================
+# Playbook Ansible - Collecte de Baseline de Performance IBM i
+# ============================================================================
+# Ce playbook collecte les métriques de performance baseline avant une mise à jour
+# pour permettre une comparaison ultérieure
+# ============================================================================
+# Usage:
+#   ansible-playbook -i inventory.ini collect_baseline.yml
+#   ansible-playbook -i inventory.ini collect_baseline.yml --extra-vars "baseline_name=before_ptf_SI12345"
+# ============================================================================
+
+- name: Collecte de Baseline de Performance IBM i
+  hosts: ibmi_stress_test
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  vars:
+    # Nom de la baseline (peut être surchargé)
+    baseline_name: "{{ baseline_name | default('baseline_' + ansible_date_time.iso8601_basic_short) }}"
+    baseline_file: "{{ baseline_name }}.json"
+    
+  tasks:
+    # -------------------------------------------------------------------------
+    # Étape 1: Informations sur la Baseline
+    # -------------------------------------------------------------------------
+    - name: Afficher les informations de la baseline
+      debug:
+        msg:
+          - "=========================================="
+          - "📊 COLLECTE DE BASELINE DE PERFORMANCE"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Nom de la baseline: {{ baseline_name }}"
+          - "Date: {{ ansible_date_time.iso8601 }}"
+          - "Fichier: {{ baseline_file }}"
+          - "=========================================="
+      tags: [info]
+
+    - name: Créer le répertoire de résultats local
+      local_action:
+        module: file
+        path: "{{ local_results_dir }}"
+        state: directory
+        mode: '0755'
+      run_once: true
+      tags: [setup]
+
+    # -------------------------------------------------------------------------
+    # Étape 2: Collecte des Informations Système
+    # -------------------------------------------------------------------------
+    - name: Collecter les informations système
+      setup:
+        gather_subset:
+          - hardware
+          - network
+          - virtual
+      tags: [collect]
+
+    - name: Extraire les informations système clés
+      set_fact:
+        system_info:
+          hostname: "{{ inventory_hostname }}"
+          os: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+          architecture: "{{ ansible_architecture }}"
+          processor_count: "{{ ansible_processor_count }}"
+          processor_cores: "{{ ansible_processor_cores }}"
+          processor_vcpus: "{{ ansible_processor_vcpus }}"
+          memory_mb: "{{ ansible_memtotal_mb }}"
+          python_version: "{{ ansible_python_version }}"
+      tags: [collect]
+
+    # -------------------------------------------------------------------------
+    # Étape 3: Collecte des Métriques de Performance Actuelles
+    # -------------------------------------------------------------------------
+    - name: Collecter les métriques CPU actuelles
+      shell: |
+        {{ python_executable }} -c "
+        import psutil
+        import json
+        cpu_percent = psutil.cpu_percent(interval=2, percpu=True)
+        cpu_freq = psutil.cpu_freq()
+        load_avg = psutil.getloadavg()
+        print(json.dumps({
+          'cpu_percent_per_core': cpu_percent,
+          'cpu_percent_total': sum(cpu_percent) / len(cpu_percent),
+          'cpu_count_logical': psutil.cpu_count(logical=True),
+          'cpu_count_physical': psutil.cpu_count(logical=False),
+          'cpu_freq_current': cpu_freq.current if cpu_freq else None,
+          'cpu_freq_min': cpu_freq.min if cpu_freq else None,
+          'cpu_freq_max': cpu_freq.max if cpu_freq else None,
+          'load_average_1min': load_avg[0],
+          'load_average_5min': load_avg[1],
+          'load_average_15min': load_avg[2]
+        }))
+        "
+      register: cpu_metrics
+      changed_when: false
+      tags: [collect]
+
+    - name: Collecter les métriques mémoire actuelles
+      shell: |
+        {{ python_executable }} -c "
+        import psutil
+        import json
+        mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        print(json.dumps({
+          'total_gb': round(mem.total / (1024**3), 2),
+          'available_gb': round(mem.available / (1024**3), 2),
+          'used_gb': round(mem.used / (1024**3), 2),
+          'percent': mem.percent,
+          'swap_total_gb': round(swap.total / (1024**3), 2),
+          'swap_used_gb': round(swap.used / (1024**3), 2),
+          'swap_percent': swap.percent
+        }))
+        "
+      register: memory_metrics
+      changed_when: false
+      tags: [collect]
+
+    - name: Collecter les métriques disque actuelles
+      shell: |
+        {{ python_executable }} -c "
+        import psutil
+        import json
+        disk_io = psutil.disk_io_counters()
+        disk_usage = psutil.disk_usage('/')
+        print(json.dumps({
+          'read_bytes': disk_io.read_bytes,
+          'write_bytes': disk_io.write_bytes,
+          'read_count': disk_io.read_count,
+          'write_count': disk_io.write_count,
+          'read_time_ms': disk_io.read_time,
+          'write_time_ms': disk_io.write_time,
+          'disk_total_gb': round(disk_usage.total / (1024**3), 2),
+          'disk_used_gb': round(disk_usage.used / (1024**3), 2),
+          'disk_free_gb': round(disk_usage.free / (1024**3), 2),
+          'disk_percent': disk_usage.percent
+        }))
+        "
+      register: disk_metrics
+      changed_when: false
+      tags: [collect]
+
+    - name: Collecter les métriques réseau actuelles
+      shell: |
+        {{ python_executable }} -c "
+        import psutil
+        import json
+        net_io = psutil.net_io_counters()
+        print(json.dumps({
+          'bytes_sent': net_io.bytes_sent,
+          'bytes_recv': net_io.bytes_recv,
+          'packets_sent': net_io.packets_sent,
+          'packets_recv': net_io.packets_recv,
+          'errin': net_io.errin,
+          'errout': net_io.errout,
+          'dropin': net_io.dropin,
+          'dropout': net_io.dropout
+        }))
+        "
+      register: network_metrics
+      changed_when: false
+      tags: [collect]
+
+    # -------------------------------------------------------------------------
+    # Étape 4: Exécution de Tests de Performance Rapides
+    # -------------------------------------------------------------------------
+    - name: Exécuter un test CPU rapide (30 secondes)
+      shell: |
+        cd {{ remote_test_dir }}
+        {{ python_executable }} ibmi_stress_cpu.py \
+          --duration 30 \
+          --cores 2 \
+          --intensity medium
+      register: quick_cpu_test
+      when: script_check.stat.exists | default(false)
+      failed_when: false
+      tags: [test]
+
+    - name: Exécuter un test I/O rapide (30 secondes)
+      shell: |
+        cd {{ remote_test_dir }}
+        {{ python_executable }} ibmi_stress_io.py \
+          --duration 30 \
+          --processes 1 \
+          --file-size 50 \
+          --operation mixed \
+          --cleanup
+      register: quick_io_test
+      when: script_check.stat.exists | default(false)
+      failed_when: false
+      tags: [test]
+
+    # -------------------------------------------------------------------------
+    # Étape 5: Compilation de la Baseline
+    # -------------------------------------------------------------------------
+    - name: Compiler toutes les métriques de baseline
+      set_fact:
+        baseline_data:
+          metadata:
+            baseline_name: "{{ baseline_name }}"
+            collection_date: "{{ ansible_date_time.iso8601 }}"
+            hostname: "{{ inventory_hostname }}"
+            purpose: "Performance baseline before system update"
+          system_info: "{{ system_info }}"
+          current_metrics:
+            cpu: "{{ cpu_metrics.stdout | from_json }}"
+            memory: "{{ memory_metrics.stdout | from_json }}"
+            disk: "{{ disk_metrics.stdout | from_json }}"
+            network: "{{ network_metrics.stdout | from_json }}"
+          quick_tests:
+            cpu_test:
+              executed: "{{ quick_cpu_test.rc is defined }}"
+              success: "{{ quick_cpu_test.rc == 0 if quick_cpu_test.rc is defined else false }}"
+              output: "{{ quick_cpu_test.stdout | default('') }}"
+            io_test:
+              executed: "{{ quick_io_test.rc is defined }}"
+              success: "{{ quick_io_test.rc == 0 if quick_io_test.rc is defined else false }}"
+              output: "{{ quick_io_test.stdout | default('') }}"
+      tags: [compile]
+
+    - name: Sauvegarder la baseline sur le serveur distant
+      copy:
+        content: "{{ baseline_data | to_nice_json }}"
+        dest: "{{ remote_test_dir }}/results/{{ baseline_file }}"
+        mode: '0644'
+      tags: [save]
+
+    - name: Récupérer la baseline localement
+      fetch:
+        src: "{{ remote_test_dir }}/results/{{ baseline_file }}"
+        dest: "{{ local_results_dir }}/{{ baseline_file }}"
+        flat: yes
+      tags: [save]
+
+    # -------------------------------------------------------------------------
+    # Étape 6: Résumé de la Baseline
+    # -------------------------------------------------------------------------
+    - name: Afficher le résumé de la baseline
+      debug:
+        msg:
+          - "=========================================="
+          - "✅ BASELINE COLLECTÉE AVEC SUCCÈS"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Nom: {{ baseline_name }}"
+          - ""
+          - "Système:"
+          - "  OS: {{ system_info.os }}"
+          - "  CPU: {{ system_info.processor_vcpus }} vCPUs"
+          - "  Mémoire: {{ system_info.memory_mb }} MB"
+          - ""
+          - "Métriques Actuelles:"
+          - "  CPU moyen: {{ (cpu_metrics.stdout | from_json).cpu_percent_total | round(2) }}%"
+          - "  Load average: {{ (cpu_metrics.stdout | from_json).load_average_1min | round(2) }}"
+          - "  Mémoire utilisée: {{ (memory_metrics.stdout | from_json).percent | round(2) }}%"
+          - "  Disque utilisé: {{ (disk_metrics.stdout | from_json).disk_percent | round(2) }}%"
+          - ""
+          - "Tests Rapides:"
+          - "  CPU: {{ 'RÉUSSI ✅' if quick_cpu_test.rc == 0 else 'NON EXÉCUTÉ' }}"
+          - "  I/O: {{ 'RÉUSSI ✅' if quick_io_test.rc == 0 else 'NON EXÉCUTÉ' }}"
+          - ""
+          - "Fichier sauvegardé:"
+          - "  Local: {{ local_results_dir }}/{{ baseline_file }}"
+          - "  Distant: {{ remote_test_dir }}/results/{{ baseline_file }}"
+          - ""
+          - "Pour comparer après mise à jour:"
+          - "  ansible-playbook -i inventory.ini compare_results.yml \\"
+          - "    --extra-vars \"baseline_file={{ local_results_dir }}/{{ baseline_file }}\""
+          - "=========================================="
+      tags: [summary]
+
+# ============================================================================
+# Fin du Playbook
+# ============================================================================
+
+# Made with Bob

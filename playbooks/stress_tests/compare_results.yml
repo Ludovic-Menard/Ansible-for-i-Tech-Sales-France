@@ -1,0 +1,276 @@
+---
+# ============================================================================
+# Playbook Ansible - Comparaison des Résultats Avant/Après Mise à Jour
+# ============================================================================
+# Ce playbook compare les métriques de performance avant et après une mise à jour
+# et génère un rapport de comparaison
+# ============================================================================
+# Usage:
+#   ansible-playbook -i inventory.ini compare_results.yml \
+#     --extra-vars "baseline_file=results/baseline_20241216.json validation_file=results/baseline_20241217.json"
+# ============================================================================
+
+- name: Comparaison des Résultats de Performance IBM i
+  hosts: ibmi_stress_test
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  vars:
+    # Fichiers à comparer (doivent être fournis)
+    comparison_report: "comparison_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+    
+  tasks:
+    # -------------------------------------------------------------------------
+    # Étape 1: Vérification des Fichiers
+    # -------------------------------------------------------------------------
+    - name: Vérifier que les fichiers de baseline et validation sont fournis
+      fail:
+        msg: |
+          Les fichiers de baseline et validation doivent être fournis.
+          Usage: ansible-playbook compare_results.yml \
+            --extra-vars "baseline_file=results/baseline.json validation_file=results/validation.json"
+      when: baseline_file is not defined or validation_file is not defined
+      tags: [check]
+
+    - name: Vérifier l'existence du fichier baseline
+      local_action:
+        module: stat
+        path: "{{ baseline_file }}"
+      register: baseline_check
+      tags: [check]
+
+    - name: Vérifier l'existence du fichier validation
+      local_action:
+        module: stat
+        path: "{{ validation_file }}"
+      register: validation_check
+      tags: [check]
+
+    - name: Erreur si les fichiers n'existent pas
+      fail:
+        msg: |
+          Fichier(s) introuvable(s):
+          {% if not baseline_check.stat.exists %}  - Baseline: {{ baseline_file }}{% endif %}
+          {% if not validation_check.stat.exists %}  - Validation: {{ validation_file }}{% endif %}
+      when: not baseline_check.stat.exists or not validation_check.stat.exists
+      tags: [check]
+
+    - name: Afficher les informations de comparaison
+      debug:
+        msg:
+          - "=========================================="
+          - "📊 COMPARAISON DES PERFORMANCES"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Fichier baseline: {{ baseline_file }}"
+          - "Fichier validation: {{ validation_file }}"
+          - "Rapport: {{ comparison_report }}"
+          - "=========================================="
+      tags: [info]
+
+    # -------------------------------------------------------------------------
+    # Étape 2: Chargement des Données
+    # -------------------------------------------------------------------------
+    - name: Charger les données baseline
+      set_fact:
+        baseline_data: "{{ lookup('file', baseline_file) | from_json }}"
+      tags: [load]
+
+    - name: Charger les données validation
+      set_fact:
+        validation_data: "{{ lookup('file', validation_file) | from_json }}"
+      tags: [load]
+
+    - name: Afficher les dates de collecte
+      debug:
+        msg:
+          - "Baseline collectée: {{ baseline_data.metadata.collection_date }}"
+          - "Validation collectée: {{ validation_data.metadata.collection_date }}"
+      tags: [load]
+
+    # -------------------------------------------------------------------------
+    # Étape 3: Comparaison des Métriques CPU
+    # -------------------------------------------------------------------------
+    - name: Comparer les métriques CPU
+      set_fact:
+        cpu_comparison:
+          baseline:
+            cpu_percent: "{{ baseline_data.current_metrics.cpu.cpu_percent_total }}"
+            load_avg_1min: "{{ baseline_data.current_metrics.cpu.load_average_1min }}"
+            load_avg_5min: "{{ baseline_data.current_metrics.cpu.load_average_5min }}"
+          validation:
+            cpu_percent: "{{ validation_data.current_metrics.cpu.cpu_percent_total }}"
+            load_avg_1min: "{{ validation_data.current_metrics.cpu.load_average_1min }}"
+            load_avg_5min: "{{ validation_data.current_metrics.cpu.load_average_5min }}"
+          difference:
+            cpu_percent: "{{ ((validation_data.current_metrics.cpu.cpu_percent_total | float) - (baseline_data.current_metrics.cpu.cpu_percent_total | float)) | round(2) }}"
+            load_avg_1min: "{{ ((validation_data.current_metrics.cpu.load_average_1min | float) - (baseline_data.current_metrics.cpu.load_average_1min | float)) | round(2) }}"
+            load_avg_5min: "{{ ((validation_data.current_metrics.cpu.load_average_5min | float) - (baseline_data.current_metrics.cpu.load_average_5min | float)) | round(2) }}"
+          percentage_change:
+            cpu_percent: "{{ (((validation_data.current_metrics.cpu.cpu_percent_total | float) - (baseline_data.current_metrics.cpu.cpu_percent_total | float)) / (baseline_data.current_metrics.cpu.cpu_percent_total | float) * 100) | round(2) if baseline_data.current_metrics.cpu.cpu_percent_total | float > 0 else 0 }}"
+            load_avg_1min: "{{ (((validation_data.current_metrics.cpu.load_average_1min | float) - (baseline_data.current_metrics.cpu.load_average_1min | float)) / (baseline_data.current_metrics.cpu.load_average_1min | float) * 100) | round(2) if baseline_data.current_metrics.cpu.load_average_1min | float > 0 else 0 }}"
+      tags: [compare]
+
+    # -------------------------------------------------------------------------
+    # Étape 4: Comparaison des Métriques Mémoire
+    # -------------------------------------------------------------------------
+    - name: Comparer les métriques mémoire
+      set_fact:
+        memory_comparison:
+          baseline:
+            percent: "{{ baseline_data.current_metrics.memory.percent }}"
+            used_gb: "{{ baseline_data.current_metrics.memory.used_gb }}"
+            available_gb: "{{ baseline_data.current_metrics.memory.available_gb }}"
+          validation:
+            percent: "{{ validation_data.current_metrics.memory.percent }}"
+            used_gb: "{{ validation_data.current_metrics.memory.used_gb }}"
+            available_gb: "{{ validation_data.current_metrics.memory.available_gb }}"
+          difference:
+            percent: "{{ ((validation_data.current_metrics.memory.percent | float) - (baseline_data.current_metrics.memory.percent | float)) | round(2) }}"
+            used_gb: "{{ ((validation_data.current_metrics.memory.used_gb | float) - (baseline_data.current_metrics.memory.used_gb | float)) | round(2) }}"
+          percentage_change:
+            percent: "{{ (((validation_data.current_metrics.memory.percent | float) - (baseline_data.current_metrics.memory.percent | float)) / (baseline_data.current_metrics.memory.percent | float) * 100) | round(2) if baseline_data.current_metrics.memory.percent | float > 0 else 0 }}"
+      tags: [compare]
+
+    # -------------------------------------------------------------------------
+    # Étape 5: Comparaison des Métriques Disque
+    # -------------------------------------------------------------------------
+    - name: Comparer les métriques disque
+      set_fact:
+        disk_comparison:
+          baseline:
+            percent: "{{ baseline_data.current_metrics.disk.disk_percent }}"
+            used_gb: "{{ baseline_data.current_metrics.disk.disk_used_gb }}"
+            free_gb: "{{ baseline_data.current_metrics.disk.disk_free_gb }}"
+          validation:
+            percent: "{{ validation_data.current_metrics.disk.disk_percent }}"
+            used_gb: "{{ validation_data.current_metrics.disk.disk_used_gb }}"
+            free_gb: "{{ validation_data.current_metrics.disk.disk_free_gb }}"
+          difference:
+            percent: "{{ ((validation_data.current_metrics.disk.disk_percent | float) - (baseline_data.current_metrics.disk.disk_percent | float)) | round(2) }}"
+            used_gb: "{{ ((validation_data.current_metrics.disk.disk_used_gb | float) - (baseline_data.current_metrics.disk.disk_used_gb | float)) | round(2) }}"
+      tags: [compare]
+
+    # -------------------------------------------------------------------------
+    # Étape 6: Évaluation des Changements
+    # -------------------------------------------------------------------------
+    - name: Évaluer les changements de performance
+      set_fact:
+        performance_assessment:
+          cpu:
+            status: "{{ 'DÉGRADÉ' if cpu_comparison.percentage_change.cpu_percent | float > performance_thresholds.cpu_degradation_critical else ('ATTENTION' if cpu_comparison.percentage_change.cpu_percent | float > performance_thresholds.cpu_degradation_warning else 'OK') }}"
+            severity: "{{ 'critical' if cpu_comparison.percentage_change.cpu_percent | float > performance_thresholds.cpu_degradation_critical else ('warning' if cpu_comparison.percentage_change.cpu_percent | float > performance_thresholds.cpu_degradation_warning else 'normal') }}"
+          memory:
+            status: "{{ 'DÉGRADÉ' if memory_comparison.percentage_change.percent | float > performance_thresholds.memory_increase_critical else ('ATTENTION' if memory_comparison.percentage_change.percent | float > performance_thresholds.memory_increase_warning else 'OK') }}"
+            severity: "{{ 'critical' if memory_comparison.percentage_change.percent | float > performance_thresholds.memory_increase_critical else ('warning' if memory_comparison.percentage_change.percent | float > performance_thresholds.memory_increase_warning else 'normal') }}"
+          overall:
+            status: "{{ 'DÉGRADÉ' if (cpu_comparison.percentage_change.cpu_percent | float > performance_thresholds.cpu_degradation_critical or memory_comparison.percentage_change.percent | float > performance_thresholds.memory_increase_critical) else ('ATTENTION' if (cpu_comparison.percentage_change.cpu_percent | float > performance_thresholds.cpu_degradation_warning or memory_comparison.percentage_change.percent | float > performance_thresholds.memory_increase_warning) else 'OK') }}"
+      tags: [evaluate]
+
+    # -------------------------------------------------------------------------
+    # Étape 7: Génération du Rapport de Comparaison
+    # -------------------------------------------------------------------------
+    - name: Compiler le rapport de comparaison
+      set_fact:
+        comparison_report_data:
+          metadata:
+            report_date: "{{ ansible_date_time.iso8601 }}"
+            hostname: "{{ inventory_hostname }}"
+            baseline_file: "{{ baseline_file }}"
+            validation_file: "{{ validation_file }}"
+            baseline_date: "{{ baseline_data.metadata.collection_date }}"
+            validation_date: "{{ validation_data.metadata.collection_date }}"
+          system_info:
+            baseline: "{{ baseline_data.system_info }}"
+            validation: "{{ validation_data.system_info }}"
+          comparisons:
+            cpu: "{{ cpu_comparison }}"
+            memory: "{{ memory_comparison }}"
+            disk: "{{ disk_comparison }}"
+          assessment: "{{ performance_assessment }}"
+          recommendations: "{{ recommendations | default([]) }}"
+      tags: [report]
+
+    - name: Générer des recommandations
+      set_fact:
+        recommendations:
+          - "{{ 'CPU: Dégradation significative détectée (+' + (cpu_comparison.percentage_change.cpu_percent | string) + '%). Investigation recommandée.' if performance_assessment.cpu.severity == 'critical' else '' }}"
+          - "{{ 'CPU: Légère augmentation détectée (+' + (cpu_comparison.percentage_change.cpu_percent | string) + '%). Surveillance recommandée.' if performance_assessment.cpu.severity == 'warning' else '' }}"
+          - "{{ 'Mémoire: Augmentation significative détectée (+' + (memory_comparison.percentage_change.percent | string) + '%). Vérifier les fuites mémoire.' if performance_assessment.memory.severity == 'critical' else '' }}"
+          - "{{ 'Mémoire: Légère augmentation détectée (+' + (memory_comparison.percentage_change.percent | string) + '%). Surveillance recommandée.' if performance_assessment.memory.severity == 'warning' else '' }}"
+          - "{{ 'Performances globales: Aucune dégradation significative détectée.' if performance_assessment.overall.status == 'OK' else '' }}"
+      tags: [report]
+
+    - name: Filtrer les recommandations vides
+      set_fact:
+        filtered_recommendations: "{{ recommendations | select('ne', '') | list }}"
+      tags: [report]
+
+    - name: Mettre à jour le rapport avec les recommandations
+      set_fact:
+        comparison_report_data: "{{ comparison_report_data | combine({'recommendations': filtered_recommendations}) }}"
+      tags: [report]
+
+    # -------------------------------------------------------------------------
+    # Étape 8: Sauvegarde du Rapport
+    # -------------------------------------------------------------------------
+    - name: Créer le répertoire de rapports local
+      local_action:
+        module: file
+        path: "{{ local_reports_dir }}"
+        state: directory
+        mode: '0755'
+      run_once: true
+      tags: [save]
+
+    - name: Sauvegarder le rapport de comparaison localement
+      local_action:
+        module: copy
+        content: "{{ comparison_report_data | to_nice_json }}"
+        dest: "{{ local_reports_dir }}/{{ comparison_report }}"
+      tags: [save]
+
+    # -------------------------------------------------------------------------
+    # Étape 9: Affichage du Résumé
+    # -------------------------------------------------------------------------
+    - name: Afficher le résumé de la comparaison
+      debug:
+        msg:
+          - "=========================================="
+          - "📊 RÉSUMÉ DE LA COMPARAISON"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Statut Global: {{ performance_assessment.overall.status }}"
+          - ""
+          - "CPU:"
+          - "  Baseline: {{ cpu_comparison.baseline.cpu_percent }}%"
+          - "  Validation: {{ cpu_comparison.validation.cpu_percent }}%"
+          - "  Changement: {{ cpu_comparison.difference.cpu_percent }}% ({{ cpu_comparison.percentage_change.cpu_percent }}%)"
+          - "  Statut: {{ performance_assessment.cpu.status }}"
+          - ""
+          - "Mémoire:"
+          - "  Baseline: {{ memory_comparison.baseline.percent }}%"
+          - "  Validation: {{ memory_comparison.validation.percent }}%"
+          - "  Changement: {{ memory_comparison.difference.percent }}% ({{ memory_comparison.percentage_change.percent }}%)"
+          - "  Statut: {{ performance_assessment.memory.status }}"
+          - ""
+          - "Disque:"
+          - "  Baseline: {{ disk_comparison.baseline.percent }}%"
+          - "  Validation: {{ disk_comparison.validation.percent }}%"
+          - "  Changement: {{ disk_comparison.difference.percent }}%"
+          - ""
+          - "Recommandations:"
+          - "{% for rec in filtered_recommendations %}  - {{ rec }}{% endfor %}"
+          - ""
+          - "Rapport sauvegardé:"
+          - "  {{ local_reports_dir }}/{{ comparison_report }}"
+          - "=========================================="
+      tags: [summary]
+
+# ============================================================================
+# Fin du Playbook
+# ============================================================================
+
+# Made with Bob

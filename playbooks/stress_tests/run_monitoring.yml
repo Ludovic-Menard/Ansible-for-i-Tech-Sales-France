@@ -1,0 +1,216 @@
+---
+# ============================================================================
+# Playbook Ansible - Monitoring Continu des Performances IBM i
+# ============================================================================
+# Ce playbook lance le monitoring continu des performances système
+# pendant l'exécution des tests de stress
+# ============================================================================
+# Usage:
+#   ansible-playbook -i inventory.ini run_monitoring.yml
+#   ansible-playbook -i inventory.ini run_monitoring.yml --extra-vars "monitor_duration=600"
+# ============================================================================
+
+- name: Monitoring Continu des Performances IBM i
+  hosts: ibmi_stress_test
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  vars:
+    # Nom du fichier de métriques avec horodatage
+    metrics_file: "metrics_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.jsonl"
+    
+  tasks:
+    # -------------------------------------------------------------------------
+    # Étape 1: Vérifications Préalables
+    # -------------------------------------------------------------------------
+    - name: Vérifier que le script de monitoring est déployé
+      stat:
+        path: "{{ remote_test_dir }}/ibmi_monitor.py"
+      register: script_check
+      tags: [check]
+
+    - name: Erreur si le script n'est pas déployé
+      fail:
+        msg: |
+          Le script ibmi_monitor.py n'est pas déployé sur {{ inventory_hostname }}.
+          Exécutez d'abord: ansible-playbook -i inventory.ini deploy_stress_tools.yml
+      when: not script_check.stat.exists
+      tags: [check]
+
+    # -------------------------------------------------------------------------
+    # Étape 2: Préparation du Monitoring
+    # -------------------------------------------------------------------------
+    - name: Afficher les paramètres du monitoring
+      debug:
+        msg:
+          - "=========================================="
+          - "📊 LANCEMENT DU MONITORING"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Intervalle: {{ monitor_interval }} secondes"
+          - "Durée: {{ monitor_duration if monitor_duration > 0 else 'Infini (Ctrl+C pour arrêter)' }}"
+          - "Fichier de métriques: {{ metrics_file }}"
+          - "Métriques détaillées: {{ 'Oui' if collect_detailed_metrics else 'Non' }}"
+          - "=========================================="
+      tags: [info]
+
+    - name: Créer le répertoire de résultats local
+      local_action:
+        module: file
+        path: "{{ local_results_dir }}"
+        state: directory
+        mode: '0755'
+      run_once: true
+      tags: [setup]
+
+    # -------------------------------------------------------------------------
+    # Étape 3: Lancement du Monitoring
+    # -------------------------------------------------------------------------
+    - name: Démarrer le monitoring des performances
+      shell: |
+        cd {{ remote_test_dir }}
+        {{ python_executable }} ibmi_monitor.py \
+          --interval {{ monitor_interval }} \
+          {{ '--duration ' + (monitor_duration | string) if monitor_duration > 0 else '' }} \
+          --output results/{{ metrics_file }} \
+          2>&1 | tee logs/monitor_{{ ansible_date_time.iso8601_basic_short }}.log
+      register: monitor_output
+      async: "{{ (monitor_duration + 60) if monitor_duration > 0 else 86400 }}"
+      poll: 10
+      tags: [execute]
+
+    - name: Afficher la sortie du monitoring
+      debug:
+        var: monitor_output.stdout_lines
+      when: 
+        - monitor_output.stdout_lines is defined
+        - monitor_output.stdout_lines | length > 0
+      tags: [execute]
+
+    # -------------------------------------------------------------------------
+    # Étape 4: Récupération des Métriques
+    # -------------------------------------------------------------------------
+    - name: Vérifier que le fichier de métriques existe
+      stat:
+        path: "{{ remote_test_dir }}/results/{{ metrics_file }}"
+      register: metrics_file_check
+      tags: [results]
+
+    - name: Récupérer le fichier de métriques localement
+      fetch:
+        src: "{{ remote_test_dir }}/results/{{ metrics_file }}"
+        dest: "{{ local_results_dir }}/{{ metrics_file }}"
+        flat: yes
+      when: metrics_file_check.stat.exists
+      tags: [results]
+
+    - name: Récupérer le fichier de log localement
+      fetch:
+        src: "{{ remote_test_dir }}/logs/monitor_{{ ansible_date_time.iso8601_basic_short }}.log"
+        dest: "{{ local_results_dir }}/monitor_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.log"
+        flat: yes
+      when: monitor_output.rc == 0
+      tags: [results]
+
+    # -------------------------------------------------------------------------
+    # Étape 5: Analyse des Métriques Collectées
+    # -------------------------------------------------------------------------
+    - name: Compter le nombre de métriques collectées
+      shell: wc -l < {{ remote_test_dir }}/results/{{ metrics_file }}
+      register: metrics_count
+      changed_when: false
+      when: metrics_file_check.stat.exists
+      tags: [analysis]
+
+    - name: Extraire les statistiques des métriques
+      shell: |
+        {{ python_executable }} -c "
+        import json
+        import sys
+        
+        metrics = []
+        try:
+            with open('{{ remote_test_dir }}/results/{{ metrics_file }}', 'r') as f:
+                for line in f:
+                    metrics.append(json.loads(line.strip()))
+        except Exception as e:
+            print(json.dumps({'error': str(e)}))
+            sys.exit(1)
+        
+        if not metrics:
+            print(json.dumps({'error': 'No metrics found'}))
+            sys.exit(1)
+        
+        # Calculer les statistiques
+        cpu_values = [m['cpu']['percent'] for m in metrics if 'cpu' in m]
+        memory_values = [m['memory']['percent'] for m in metrics if 'memory' in m]
+        
+        stats = {
+            'total_samples': len(metrics),
+            'duration_seconds': (metrics[-1]['timestamp'] - metrics[0]['timestamp']) if len(metrics) > 1 else 0,
+            'cpu': {
+                'min': min(cpu_values) if cpu_values else 0,
+                'max': max(cpu_values) if cpu_values else 0,
+                'avg': sum(cpu_values) / len(cpu_values) if cpu_values else 0
+            },
+            'memory': {
+                'min': min(memory_values) if memory_values else 0,
+                'max': max(memory_values) if memory_values else 0,
+                'avg': sum(memory_values) / len(memory_values) if memory_values else 0
+            }
+        }
+        
+        print(json.dumps(stats))
+        "
+      register: metrics_stats
+      changed_when: false
+      when: metrics_file_check.stat.exists
+      tags: [analysis]
+
+    - name: Afficher les statistiques des métriques
+      debug:
+        msg: "{{ metrics_stats.stdout | from_json }}"
+      when: 
+        - metrics_file_check.stat.exists
+        - metrics_stats.rc == 0
+      tags: [analysis]
+
+    # -------------------------------------------------------------------------
+    # Étape 6: Résumé du Monitoring
+    # -------------------------------------------------------------------------
+    - name: Afficher le résumé du monitoring
+      debug:
+        msg:
+          - "=========================================="
+          - "📊 RÉSUMÉ DU MONITORING"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Monitoring: {{ 'RÉUSSI ✅' if monitor_output.rc == 0 else 'ÉCHOUÉ ❌' }}"
+          - ""
+          - "Métriques collectées: {{ metrics_count.stdout if metrics_file_check.stat.exists else 'N/A' }}"
+          - ""
+          - "{% if metrics_file_check.stat.exists and metrics_stats.rc == 0 %}"
+          - "Statistiques CPU:"
+          - "  Minimum: {{ (metrics_stats.stdout | from_json).cpu.min | round(2) }}%"
+          - "  Maximum: {{ (metrics_stats.stdout | from_json).cpu.max | round(2) }}%"
+          - "  Moyenne: {{ (metrics_stats.stdout | from_json).cpu.avg | round(2) }}%"
+          - ""
+          - "Statistiques Mémoire:"
+          - "  Minimum: {{ (metrics_stats.stdout | from_json).memory.min | round(2) }}%"
+          - "  Maximum: {{ (metrics_stats.stdout | from_json).memory.max | round(2) }}%"
+          - "  Moyenne: {{ (metrics_stats.stdout | from_json).memory.avg | round(2) }}%"
+          - "{% endif %}"
+          - ""
+          - "Fichiers générés:"
+          - "  Métriques: {{ local_results_dir }}/{{ metrics_file }}"
+          - "  Log: {{ local_results_dir }}/monitor_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.log"
+          - "=========================================="
+      tags: [summary]
+
+# ============================================================================
+# Fin du Playbook
+# ============================================================================
+
+# Made with Bob

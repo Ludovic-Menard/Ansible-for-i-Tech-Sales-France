@@ -1,0 +1,238 @@
+---
+# ============================================================================
+# Playbook Ansible - Orchestrateur de Tests de Stress IBM i
+# ============================================================================
+# Ce playbook lance l'orchestrateur qui exécute des scénarios prédéfinis
+# combinant tests CPU, I/O et monitoring
+# ============================================================================
+# Usage:
+#   ansible-playbook -i inventory.ini run_orchestrator.yml
+#   ansible-playbook -i inventory.ini run_orchestrator.yml --extra-vars "orchestrator_scenario=demo_intensive"
+# ============================================================================
+
+- name: Orchestrateur de Tests de Stress IBM i
+  hosts: ibmi_stress_test
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  vars:
+    # Nom du fichier de résultats avec horodatage
+    results_file: "orchestrator_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+    log_file: "orchestrator_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.log"
+    
+  tasks:
+    # -------------------------------------------------------------------------
+    # Étape 1: Vérifications Préalables
+    # -------------------------------------------------------------------------
+    - name: Vérifier que l'orchestrateur est déployé
+      stat:
+        path: "{{ remote_test_dir }}/ibmi_stress_orchestrator.py"
+      register: script_check
+      tags: [check]
+
+    - name: Erreur si le script n'est pas déployé
+      fail:
+        msg: |
+          Le script ibmi_stress_orchestrator.py n'est pas déployé sur {{ inventory_hostname }}.
+          Exécutez d'abord: ansible-playbook -i inventory.ini deploy_stress_tools.yml
+      when: not script_check.stat.exists
+      tags: [check]
+
+    - name: Lister les scénarios disponibles
+      shell: |
+        {{ python_executable }} {{ remote_test_dir }}/ibmi_stress_orchestrator.py --list-scenarios
+      register: available_scenarios
+      changed_when: false
+      tags: [info]
+
+    - name: Afficher les scénarios disponibles
+      debug:
+        var: available_scenarios.stdout_lines
+      tags: [info]
+
+    # -------------------------------------------------------------------------
+    # Étape 2: Préparation du Scénario
+    # -------------------------------------------------------------------------
+    - name: Déterminer le scénario à exécuter
+      set_fact:
+        scenario_to_run: "{{ orchestrator_scenario }}"
+        scenario_file: "{{ orchestrator_custom_file | default('') }}"
+      tags: [setup]
+
+    - name: Afficher les paramètres du scénario
+      debug:
+        msg:
+          - "=========================================="
+          - "🎯 LANCEMENT DE L'ORCHESTRATEUR"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Scénario: {{ scenario_to_run }}"
+          - "{% if scenario_file %}Fichier personnalisé: {{ scenario_file }}{% endif %}"
+          - "Fichier de résultats: {{ results_file }}"
+          - "=========================================="
+      tags: [info]
+
+    - name: Créer le répertoire de résultats local
+      local_action:
+        module: file
+        path: "{{ local_results_dir }}"
+        state: directory
+        mode: '0755'
+      run_once: true
+      tags: [setup]
+
+    # -------------------------------------------------------------------------
+    # Étape 3: Copie du Fichier de Scénario Personnalisé (si fourni)
+    # -------------------------------------------------------------------------
+    - name: Copier le fichier de scénario personnalisé
+      copy:
+        src: "{{ scenario_file }}"
+        dest: "{{ remote_test_dir }}/custom_scenario.json"
+        mode: '0644'
+      when: scenario_file != ''
+      tags: [setup]
+
+    # -------------------------------------------------------------------------
+    # Étape 4: Exécution de l'Orchestrateur
+    # -------------------------------------------------------------------------
+    - name: Exécuter l'orchestrateur avec scénario prédéfini
+      shell: |
+        cd {{ remote_test_dir }}
+        {{ python_executable }} ibmi_stress_orchestrator.py \
+          --scenario {{ scenario_to_run }} \
+          2>&1 | tee logs/{{ log_file }}
+      register: orchestrator_output
+      async: 7200
+      poll: 15
+      when: scenario_file == ''
+      tags: [execute]
+
+    - name: Exécuter l'orchestrateur avec scénario personnalisé
+      shell: |
+        cd {{ remote_test_dir }}
+        {{ python_executable }} ibmi_stress_orchestrator.py \
+          --file custom_scenario.json \
+          2>&1 | tee logs/{{ log_file }}
+      register: orchestrator_custom_output
+      async: 7200
+      poll: 15
+      when: scenario_file != ''
+      tags: [execute]
+
+    - name: Définir la sortie finale
+      set_fact:
+        final_output: "{{ orchestrator_output if scenario_file == '' else orchestrator_custom_output }}"
+      tags: [execute]
+
+    - name: Afficher la sortie de l'orchestrateur
+      debug:
+        var: final_output.stdout_lines
+      when: final_output.stdout_lines is defined
+      tags: [execute]
+
+    # -------------------------------------------------------------------------
+    # Étape 5: Collecte des Résultats
+    # -------------------------------------------------------------------------
+    - name: Rechercher les fichiers de métriques générés
+      find:
+        paths: "{{ remote_test_dir }}/results"
+        patterns: "metrics_*.jsonl"
+        age: -1h
+      register: metrics_files
+      tags: [results]
+
+    - name: Afficher les fichiers de métriques trouvés
+      debug:
+        msg: "Fichiers de métriques: {{ metrics_files.files | map(attribute='path') | list }}"
+      when: metrics_files.files | length > 0
+      tags: [results]
+
+    - name: Récupérer les fichiers de métriques localement
+      fetch:
+        src: "{{ item.path }}"
+        dest: "{{ local_results_dir }}/{{ item.path | basename }}"
+        flat: yes
+      loop: "{{ metrics_files.files }}"
+      when: metrics_files.files | length > 0
+      tags: [results]
+
+    - name: Récupérer le fichier de log localement
+      fetch:
+        src: "{{ remote_test_dir }}/logs/{{ log_file }}"
+        dest: "{{ local_results_dir }}/{{ log_file }}"
+        flat: yes
+      when: final_output.rc == 0
+      tags: [results]
+
+    # -------------------------------------------------------------------------
+    # Étape 6: Analyse des Résultats
+    # -------------------------------------------------------------------------
+    - name: Extraire les statistiques du scénario
+      set_fact:
+        scenario_results:
+          hostname: "{{ inventory_hostname }}"
+          test_type: "orchestrator"
+          scenario: "{{ scenario_to_run }}"
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          return_code: "{{ final_output.rc }}"
+          success: "{{ final_output.rc == 0 }}"
+          metrics_files_count: "{{ metrics_files.files | length }}"
+          output: "{{ final_output.stdout }}"
+      tags: [analysis]
+
+    - name: Sauvegarder les résultats du scénario
+      copy:
+        content: "{{ scenario_results | to_nice_json }}"
+        dest: "{{ remote_test_dir }}/results/{{ results_file }}"
+        mode: '0644'
+      tags: [results]
+
+    - name: Récupérer le fichier de résultats localement
+      fetch:
+        src: "{{ remote_test_dir }}/results/{{ results_file }}"
+        dest: "{{ local_results_dir }}/{{ results_file }}"
+        flat: yes
+      tags: [results]
+
+    # -------------------------------------------------------------------------
+    # Étape 7: Résumé de l'Exécution
+    # -------------------------------------------------------------------------
+    - name: Afficher le résumé de l'orchestrateur
+      debug:
+        msg:
+          - "=========================================="
+          - "📊 RÉSUMÉ DE L'ORCHESTRATEUR"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Scénario: {{ scenario_to_run }}"
+          - "Exécution: {{ 'RÉUSSIE ✅' if final_output.rc == 0 else 'ÉCHOUÉE ❌' }}"
+          - ""
+          - "Fichiers générés:"
+          - "  Résultats: {{ local_results_dir }}/{{ results_file }}"
+          - "  Log: {{ local_results_dir }}/{{ log_file }}"
+          - "  Métriques: {{ metrics_files.files | length }} fichier(s)"
+          - ""
+          - "Pour analyser les métriques:"
+          - "  cat {{ local_results_dir }}/metrics_*.jsonl | jq ."
+          - "=========================================="
+      tags: [summary]
+
+    # -------------------------------------------------------------------------
+    # Étape 8: Nettoyage (Optionnel)
+    # -------------------------------------------------------------------------
+    - name: Nettoyer le fichier de scénario personnalisé
+      file:
+        path: "{{ remote_test_dir }}/custom_scenario.json"
+        state: absent
+      when: 
+        - scenario_file != ''
+        - cleanup_after_test | bool
+      tags: [cleanup]
+
+# ============================================================================
+# Fin du Playbook
+# ============================================================================
+
+# Made with Bob

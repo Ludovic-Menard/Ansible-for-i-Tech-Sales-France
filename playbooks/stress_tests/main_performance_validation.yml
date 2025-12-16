@@ -1,0 +1,281 @@
+---
+# ============================================================================
+# Playbook Ansible Principal - Validation Complète de Performance IBM i
+# ============================================================================
+# Ce playbook orchestre le workflow complet de validation de performance:
+# 1. Collecte baseline avant mise à jour
+# 2. Pause pour appliquer la mise à jour
+# 3. Tests de validation après mise à jour
+# 4. Comparaison des résultats
+# 5. Génération du rapport HTML
+# ============================================================================
+# Usage:
+#   ansible-playbook -i inventory.ini main_performance_validation.yml
+#   ansible-playbook -i inventory.ini main_performance_validation.yml --extra-vars "skip_baseline=true"
+# ============================================================================
+
+- name: Workflow Complet de Validation de Performance IBM i
+  hosts: ibmi_stress_test
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  vars:
+    # Noms des fichiers pour ce workflow
+    workflow_id: "validation_{{ ansible_date_time.iso8601_basic_short }}"
+    baseline_file_name: "baseline_{{ workflow_id }}.json"
+    validation_file_name: "validation_{{ workflow_id }}.json"
+    comparison_file_name: "comparison_{{ workflow_id }}.json"
+    html_report_name: "report_{{ workflow_id }}.html"
+    
+  tasks:
+    # =========================================================================
+    # PHASE 1: COLLECTE BASELINE AVANT MISE À JOUR
+    # =========================================================================
+    - name: "PHASE 1: Afficher le début de la collecte baseline"
+      debug:
+        msg:
+          - "=========================================="
+          - "🎯 PHASE 1: COLLECTE BASELINE"
+          - "=========================================="
+          - "Workflow ID: {{ workflow_id }}"
+          - "Hôte: {{ inventory_hostname }}"
+          - "Date: {{ ansible_date_time.iso8601 }}"
+          - "=========================================="
+      tags: [phase1, baseline]
+
+    - name: "PHASE 1: Collecter la baseline de performance"
+      include_tasks: collect_baseline.yml
+      vars:
+        baseline_name: "baseline_{{ workflow_id }}"
+      when: not (skip_baseline | default(false) | bool)
+      tags: [phase1, baseline]
+
+    - name: "PHASE 1: Baseline collectée avec succès"
+      debug:
+        msg:
+          - "✅ Baseline collectée et sauvegardée"
+          - "Fichier: {{ local_results_dir }}/{{ baseline_file_name }}"
+      when: not (skip_baseline | default(false) | bool)
+      tags: [phase1, baseline]
+
+    # =========================================================================
+    # PHASE 2: PAUSE POUR MISE À JOUR
+    # =========================================================================
+    - name: "PHASE 2: Instructions pour la mise à jour"
+      debug:
+        msg:
+          - "=========================================="
+          - "⏸️  PHASE 2: MISE À JOUR DU SYSTÈME"
+          - "=========================================="
+          - ""
+          - "La baseline a été collectée avec succès."
+          - ""
+          - "PROCHAINES ÉTAPES:"
+          - "1. Appliquez vos PTFs ou mises à jour système"
+          - "2. Redémarrez le système si nécessaire"
+          - "3. Vérifiez que le système est stable"
+          - "4. Relancez ce playbook avec --tags phase3"
+          - ""
+          - "COMMANDE POUR CONTINUER:"
+          - "  ansible-playbook -i inventory.ini main_performance_validation.yml \\"
+          - "    --tags phase3,phase4,phase5 \\"
+          - "    --extra-vars \"baseline_file={{ local_results_dir }}/{{ baseline_file_name }}\""
+          - ""
+          - "=========================================="
+      when: not (skip_baseline | default(false) | bool)
+      tags: [phase2, update]
+
+    - name: "PHASE 2: Pause pour permettre la mise à jour"
+      pause:
+        prompt: |
+          
+          Appuyez sur ENTRÉE après avoir appliqué la mise à jour et vérifié la stabilité du système.
+          Ou appuyez sur Ctrl+C puis A pour annuler.
+      when: 
+        - not (skip_baseline | default(false) | bool)
+        - not (auto_continue | default(false) | bool)
+      tags: [phase2, update]
+
+    # =========================================================================
+    # PHASE 3: TESTS DE VALIDATION APRÈS MISE À JOUR
+    # =========================================================================
+    - name: "PHASE 3: Afficher le début des tests de validation"
+      debug:
+        msg:
+          - "=========================================="
+          - "🚀 PHASE 3: TESTS DE VALIDATION"
+          - "=========================================="
+          - "Exécution des tests de performance..."
+          - "=========================================="
+      tags: [phase3, validation]
+
+    - name: "PHASE 3: Exécuter les tests CPU de validation"
+      include_tasks: run_cpu_stress.yml
+      vars:
+        results_file: "cpu_validation_{{ workflow_id }}.json"
+      tags: [phase3, validation, cpu]
+
+    - name: "PHASE 3: Exécuter les tests I/O de validation"
+      include_tasks: run_io_stress.yml
+      vars:
+        results_file: "io_validation_{{ workflow_id }}.json"
+      tags: [phase3, validation, io]
+
+    - name: "PHASE 3: Collecter la nouvelle baseline post-mise à jour"
+      include_tasks: collect_baseline.yml
+      vars:
+        baseline_name: "validation_{{ workflow_id }}"
+      tags: [phase3, validation]
+
+    - name: "PHASE 3: Tests de validation terminés"
+      debug:
+        msg:
+          - "✅ Tests de validation terminés"
+          - "Fichier: {{ local_results_dir }}/{{ validation_file_name }}"
+      tags: [phase3, validation]
+
+    # =========================================================================
+    # PHASE 4: COMPARAISON DES RÉSULTATS
+    # =========================================================================
+    - name: "PHASE 4: Afficher le début de la comparaison"
+      debug:
+        msg:
+          - "=========================================="
+          - "📊 PHASE 4: COMPARAISON DES RÉSULTATS"
+          - "=========================================="
+          - "Analyse des différences de performance..."
+          - "=========================================="
+      tags: [phase4, compare]
+
+    - name: "PHASE 4: Vérifier l'existence des fichiers de baseline et validation"
+      stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ baseline_file | default(local_results_dir + '/' + baseline_file_name) }}"
+        - "{{ local_results_dir }}/{{ validation_file_name }}"
+      register: comparison_files_check
+      delegate_to: localhost
+      tags: [phase4, compare]
+
+    - name: "PHASE 4: Comparer les résultats"
+      include_tasks: compare_results.yml
+      vars:
+        baseline_file: "{{ baseline_file | default(local_results_dir + '/' + baseline_file_name) }}"
+        validation_file: "{{ local_results_dir }}/{{ validation_file_name }}"
+        comparison_report: "{{ comparison_file_name }}"
+      when: comparison_files_check.results | selectattr('stat.exists') | list | length == 2
+      tags: [phase4, compare]
+
+    - name: "PHASE 4: Comparaison terminée"
+      debug:
+        msg:
+          - "✅ Comparaison terminée"
+          - "Fichier: {{ local_reports_dir }}/{{ comparison_file_name }}"
+      tags: [phase4, compare]
+
+    # =========================================================================
+    # PHASE 5: GÉNÉRATION DU RAPPORT HTML
+    # =========================================================================
+    - name: "PHASE 5: Afficher le début de la génération du rapport"
+      debug:
+        msg:
+          - "=========================================="
+          - "📄 PHASE 5: GÉNÉRATION DU RAPPORT HTML"
+          - "=========================================="
+          - "Création du rapport visuel..."
+          - "=========================================="
+      when: generate_html_report | bool
+      tags: [phase5, report]
+
+    - name: "PHASE 5: Charger les données de comparaison"
+      set_fact:
+        comparison_data: "{{ lookup('file', local_reports_dir + '/' + comparison_file_name) | from_json }}"
+      when: generate_html_report | bool
+      tags: [phase5, report]
+
+    - name: "PHASE 5: Préparer les variables pour le template HTML"
+      set_fact:
+        html_vars:
+          hostname: "{{ inventory_hostname }}"
+          report_date: "{{ ansible_date_time.iso8601 }}"
+          baseline_date: "{{ comparison_data.metadata.baseline_date }}"
+          validation_date: "{{ comparison_data.metadata.validation_date }}"
+          overall_status: "{{ comparison_data.assessment.overall.status }}"
+          cpu_baseline: "{{ comparison_data.comparisons.cpu.baseline.cpu_percent }}"
+          cpu_validation: "{{ comparison_data.comparisons.cpu.validation.cpu_percent }}"
+          cpu_change: "{{ comparison_data.comparisons.cpu.difference.cpu_percent }}"
+          cpu_change_percent: "{{ comparison_data.comparisons.cpu.percentage_change.cpu_percent }}"
+          cpu_status: "{{ comparison_data.assessment.cpu.status }}"
+          memory_baseline: "{{ comparison_data.comparisons.memory.baseline.percent }}"
+          memory_validation: "{{ comparison_data.comparisons.memory.validation.percent }}"
+          memory_change: "{{ comparison_data.comparisons.memory.difference.percent }}"
+          memory_change_percent: "{{ comparison_data.comparisons.memory.percentage_change.percent }}"
+          memory_status: "{{ comparison_data.assessment.memory.status }}"
+          memory_used_baseline: "{{ comparison_data.comparisons.memory.baseline.used_gb }}"
+          memory_used_validation: "{{ comparison_data.comparisons.memory.validation.used_gb }}"
+          memory_used_change: "{{ comparison_data.comparisons.memory.difference.used_gb }}"
+          disk_baseline: "{{ comparison_data.comparisons.disk.baseline.percent }}"
+          disk_validation: "{{ comparison_data.comparisons.disk.validation.percent }}"
+          disk_change: "{{ comparison_data.comparisons.disk.difference.percent }}"
+          load_avg_baseline: "{{ comparison_data.comparisons.cpu.baseline.load_avg_1min }}"
+          load_avg_validation: "{{ comparison_data.comparisons.cpu.validation.load_avg_1min }}"
+          load_avg_change: "{{ comparison_data.comparisons.cpu.difference.load_avg_1min }}"
+          recommendations: "{{ comparison_data.recommendations }}"
+          os_version: "{{ comparison_data.system_info.baseline.os }}"
+          cpu_count: "{{ comparison_data.system_info.baseline.processor_vcpus }}"
+          memory_total: "{{ (comparison_data.system_info.baseline.memory_mb | int / 1024) | round(2) }}"
+      when: generate_html_report | bool
+      tags: [phase5, report]
+
+    - name: "PHASE 5: Générer le rapport HTML"
+      template:
+        src: templates/performance_report.html.j2
+        dest: "{{ local_reports_dir }}/{{ html_report_name }}"
+      vars: "{{ html_vars }}"
+      delegate_to: localhost
+      when: generate_html_report | bool
+      tags: [phase5, report]
+
+    - name: "PHASE 5: Rapport HTML généré"
+      debug:
+        msg:
+          - "✅ Rapport HTML généré avec succès"
+          - "Fichier: {{ local_reports_dir }}/{{ html_report_name }}"
+          - ""
+          - "Pour visualiser:"
+          - "  open {{ local_reports_dir }}/{{ html_report_name }}"
+      when: generate_html_report | bool
+      tags: [phase5, report]
+
+    # =========================================================================
+    # RÉSUMÉ FINAL
+    # =========================================================================
+    - name: "Afficher le résumé final du workflow"
+      debug:
+        msg:
+          - "=========================================="
+          - "✅ WORKFLOW DE VALIDATION TERMINÉ"
+          - "=========================================="
+          - "Workflow ID: {{ workflow_id }}"
+          - "Hôte: {{ inventory_hostname }}"
+          - ""
+          - "Fichiers générés:"
+          - "  📊 Baseline: {{ local_results_dir }}/{{ baseline_file_name }}"
+          - "  📊 Validation: {{ local_results_dir }}/{{ validation_file_name }}"
+          - "  📊 Comparaison: {{ local_reports_dir }}/{{ comparison_file_name }}"
+          - "  📄 Rapport HTML: {{ local_reports_dir }}/{{ html_report_name }}"
+          - ""
+          - "Statut: {{ comparison_data.assessment.overall.status if comparison_data is defined else 'N/A' }}"
+          - ""
+          - "Pour visualiser le rapport:"
+          - "  open {{ local_reports_dir }}/{{ html_report_name }}"
+          - "=========================================="
+      tags: [summary]
+
+# ============================================================================
+# Fin du Playbook Principal
+# ============================================================================
+
+# Made with Bob
