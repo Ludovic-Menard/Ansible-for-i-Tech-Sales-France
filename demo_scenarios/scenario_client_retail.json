@@ -1,0 +1,21 @@
+{
+  "name": "Démonstration Retail - Pic d'Activité",
+  "description": "Simulation de pic d'activité retail (soldes, Black Friday) avec forte charge transactionnelle",
+  "duration": 480,
+  "monitor": true,
+  "monitor_interval": 3,
+  "cpu_tests": [
+    {
+      "cores": 8,
+      "intensity": "extreme"
+    }
+  ],
+  "io_tests": [
+    {
+      "processes": 6,
+      "file_size": 150,
+      "operation": "mixed",
+      "directory": "/tmp/demo_retail"
+    }
+  ]
+}

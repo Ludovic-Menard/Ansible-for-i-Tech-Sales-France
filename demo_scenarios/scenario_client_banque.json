@@ -1,0 +1,21 @@
+{
+  "name": "Démonstration Banque - Traitement Batch",
+  "description": "Simulation de traitement batch bancaire avec forte charge CPU et I/O",
+  "duration": 600,
+  "monitor": true,
+  "monitor_interval": 5,
+  "cpu_tests": [
+    {
+      "cores": 6,
+      "intensity": "high"
+    }
+  ],
+  "io_tests": [
+    {
+      "processes": 4,
+      "file_size": 200,
+      "operation": "mixed",
+      "directory": "/tmp/demo_banque"
+    }
+  ]
+}

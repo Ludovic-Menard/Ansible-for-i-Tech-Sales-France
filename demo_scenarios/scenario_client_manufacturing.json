@@ -1,0 +1,31 @@
+{
+  "name": "Démonstration Manufacturing - ERP Intensif",
+  "description": "Simulation de charge ERP manufacturing avec calculs MRP et gestion de production",
+  "duration": 720,
+  "monitor": true,
+  "monitor_interval": 5,
+  "cpu_tests": [
+    {
+      "cores": 4,
+      "intensity": "high"
+    },
+    {
+      "cores": 4,
+      "intensity": "medium"
+    }
+  ],
+  "io_tests": [
+    {
+      "processes": 3,
+      "file_size": 180,
+      "operation": "write",
+      "directory": "/tmp/demo_manufacturing_write"
+    },
+    {
+      "processes": 3,
+      "file_size": 180,
+      "operation": "read",
+      "directory": "/tmp/demo_manufacturing_read"
+    }
+  ]
+}
