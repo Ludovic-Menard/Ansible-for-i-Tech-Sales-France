@@ -1,0 +1,6 @@
+{% set s_no = namespace(value=1) %}
+PTF_GROUP_NUMBER,PTF_GROUP_TITLE,PTF_GROUP_DESCRIPTION,PTF_GROUP_LEVEL,PTF_GROUP_STATUS,PTF_GROUP_RELEASE,PTF_GROUP_CURRENCY,PTF_GROUP_TYPE
+{% for each in group_ptf_info.row %}
+{{each.PTF_GROUP_NUMBER}},{{each.PTF_GROUP_TITLE}},{{each.PTF_GROUP_DESCRIPTION}},{{each.PTF_GROUP_LEVEL}},{{each.PTF_GROUP_STATUS}},{{each.PTF_GROUP_RELEASE}},{{each.PTF_GROUP_CURRENCY}},{{each.PTF_GROUP_TYPE}}
+{% set s_no.value = s_no.value + 1 %}
+{% endfor %}

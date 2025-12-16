@@ -1,0 +1,35 @@
+# Copyright (c) IBM Corporation 2019, 2020
+# Apache License, Version 2.0 (see https://opensource.org/licenses/Apache-2.0)
+---
+- hosts: all
+  gather_facts: false
+  collections:
+    - ibm.power_ibmi
+
+  vars:
+    user_profile: ludo
+    become_user_name: null
+    become_user_password: null
+
+  tasks:
+    - name: Query GROUP_PTF_INFO from QSYS2
+      ibmi_sql_query:
+        sql: "SELECT * FROM QSYS2.GROUP_PTF_INFO"
+        become_user: '{{ become_user_name }}'
+        become_user_password: '{{ become_user_password }}'
+      register: group_ptf_info
+      tags: group_ptf_info
+      ignore_errors: true
+
+    - name: Display GROUP_PTF_INFO results
+      debug:
+        var: group_ptf_info
+
+    - name: Generate CSV export from template
+      template:
+        src: group_ptf_info_csv.j2
+        dest: /home/{{ user_profile }}/group_ptf_info.csv
+      when: group_ptf_info.row is defined
+      tags: export_csv
+
+# Made with Bob
