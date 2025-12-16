@@ -1,0 +1,56 @@
+# ============================================================================
+# .gitignore pour les Tests de Stress IBM i
+# ============================================================================
+
+# Fichiers d'inventaire avec mots de passe
+inventory.ini
+*.ini
+!inventory_example.ini
+
+# Résultats des tests
+results/
+*.json
+*.jsonl
+*.log
+
+# Rapports générés
+reports/
+*.html
+*.pdf
+
+# Fichiers temporaires Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Environnements virtuels
+venv/
+env/
+ENV/
+
+# Fichiers de configuration locaux
+local_vars.yml
+*_local.yml
+
+# Fichiers de sauvegarde
+*.bak
+*.swp
+*.swo
+*~
+
+# Fichiers macOS
+.DS_Store
+
+# Fichiers Windows
+Thumbs.db
+desktop.ini
+
+# Fichiers d'éditeur
+.vscode/
+.idea/
+*.sublime-*
+
+# Logs Ansible
+*.retry

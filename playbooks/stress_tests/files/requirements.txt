@@ -1,0 +1,12 @@
+# ============================================================================
+# Dépendances Python pour les Tests de Stress IBM i
+# ============================================================================
+# Installation: pip3 install -r requirements.txt
+# ============================================================================
+
+# Bibliothèque principale pour le monitoring système
+psutil>=5.9.0
+
+# Optionnel: Pour des graphiques avancés dans les rapports
+# matplotlib>=3.5.0
+# pandas>=1.4.0

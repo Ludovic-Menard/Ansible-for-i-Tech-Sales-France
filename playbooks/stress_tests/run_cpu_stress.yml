@@ -1,0 +1,255 @@
+---
+# ============================================================================
+# Playbook Ansible - Exécution des Tests de Stress CPU sur IBM i
+# ============================================================================
+# Ce playbook exécute des tests de stress CPU sur les serveurs IBM i
+# et collecte les métriques de performance
+# ============================================================================
+# Usage:
+#   ansible-playbook -i inventory.ini run_cpu_stress.yml
+#   ansible-playbook -i inventory.ini run_cpu_stress.yml --extra-vars "cpu_cores=8"
+#   ansible-playbook -i inventory.ini run_cpu_stress.yml --limit ibmi-dev
+# ============================================================================
+
+- name: Exécution des Tests de Stress CPU sur IBM i
+  hosts: ibmi_stress_test
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  vars:
+    # Nom du fichier de résultats avec horodatage
+    results_file: "cpu_stress_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+    log_file: "cpu_stress_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.log"
+  
+  tasks:
+    # -------------------------------------------------------------------------
+    # Étape 1: Vérifications Préalables
+    # -------------------------------------------------------------------------
+    - name: Vérifier que les scripts sont déployés
+      stat:
+        path: "{{ remote_test_dir }}/ibmi_stress_cpu.py"
+      register: script_check
+      tags: [check]
+
+    - name: Erreur si le script n'est pas déployé
+      fail:
+        msg: |
+          Le script ibmi_stress_cpu.py n'est pas déployé sur {{ inventory_hostname }}.
+          Exécutez d'abord: ansible-playbook -i inventory.ini deploy_stress_tools.yml
+      when: not script_check.stat.exists
+      tags: [check]
+
+    - name: Vérifier l'espace disque disponible
+      shell: df -h {{ remote_test_dir }} | tail -1 | awk '{print $4}'
+      register: disk_space
+      changed_when: false
+      tags: [check]
+
+    - name: Afficher l'espace disque disponible
+      debug:
+        msg: "Espace disque disponible: {{ disk_space.stdout }}"
+      tags: [check]
+
+    # -------------------------------------------------------------------------
+    # Étape 2: Collecte des Métriques Avant le Test (Baseline)
+    # -------------------------------------------------------------------------
+    - name: Collecter les métriques CPU avant le test
+      shell: |
+        {{ python_executable }} -c "
+        import psutil
+        import json
+        cpu_percent = psutil.cpu_percent(interval=1, percpu=True)
+        load_avg = psutil.getloadavg()
+        print(json.dumps({
+          'cpu_percent_per_core': cpu_percent,
+          'cpu_percent_total': sum(cpu_percent) / len(cpu_percent),
+          'load_average': load_avg,
+          'cpu_count': psutil.cpu_count()
+        }))
+        "
+      register: baseline_metrics
+      changed_when: false
+      tags: [baseline]
+
+    - name: Afficher les métriques baseline
+      debug:
+        msg: "Métriques CPU avant test: {{ baseline_metrics.stdout | from_json }}"
+      tags: [baseline]
+
+    # -------------------------------------------------------------------------
+    # Étape 3: Préparation du Test
+    # -------------------------------------------------------------------------
+    - name: Afficher les paramètres du test
+      debug:
+        msg:
+          - "=========================================="
+          - "🚀 LANCEMENT DU TEST DE STRESS CPU"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Durée: {{ cpu_test_duration }} secondes ({{ (cpu_test_duration / 60) | round(1) }} minutes)"
+          - "Nombre de cœurs: {{ cpu_cores }}"
+          - "Intensité: {{ cpu_intensity }}"
+          - "Fichier de résultats: {{ results_file }}"
+          - "=========================================="
+      tags: [info]
+
+    - name: Créer le répertoire de résultats local
+      local_action:
+        module: file
+        path: "{{ local_results_dir }}"
+        state: directory
+        mode: '0755'
+      run_once: true
+      tags: [setup]
+
+    # -------------------------------------------------------------------------
+    # Étape 4: Exécution du Test de Stress CPU
+    # -------------------------------------------------------------------------
+    - name: Exécuter le test de stress CPU
+      shell: |
+        cd {{ remote_test_dir }}
+        {{ python_executable }} ibmi_stress_cpu.py \
+          --duration {{ cpu_test_duration }} \
+          --cores {{ cpu_cores }} \
+          --intensity {{ cpu_intensity }} \
+          2>&1 | tee logs/{{ log_file }}
+      register: stress_test_output
+      async: "{{ cpu_test_duration + 120 }}"
+      poll: 10
+      tags: [execute]
+
+    - name: Afficher la sortie du test
+      debug:
+        var: stress_test_output.stdout_lines
+      when: stress_test_output.stdout_lines is defined
+      tags: [execute]
+
+    # -------------------------------------------------------------------------
+    # Étape 5: Collecte des Métriques Après le Test
+    # -------------------------------------------------------------------------
+    - name: Attendre la stabilisation du système (30 secondes)
+      pause:
+        seconds: 30
+      tags: [post-test]
+
+    - name: Collecter les métriques CPU après le test
+      shell: |
+        {{ python_executable }} -c "
+        import psutil
+        import json
+        cpu_percent = psutil.cpu_percent(interval=1, percpu=True)
+        load_avg = psutil.getloadavg()
+        print(json.dumps({
+          'cpu_percent_per_core': cpu_percent,
+          'cpu_percent_total': sum(cpu_percent) / len(cpu_percent),
+          'load_average': load_avg,
+          'cpu_count': psutil.cpu_count()
+        }))
+        "
+      register: post_test_metrics
+      changed_when: false
+      tags: [post-test]
+
+    - name: Afficher les métriques post-test
+      debug:
+        msg: "Métriques CPU après test: {{ post_test_metrics.stdout | from_json }}"
+      tags: [post-test]
+
+    # -------------------------------------------------------------------------
+    # Étape 6: Extraction et Analyse des Résultats
+    # -------------------------------------------------------------------------
+    - name: Extraire les statistiques du test depuis la sortie
+      set_fact:
+        test_results:
+          hostname: "{{ inventory_hostname }}"
+          test_type: "cpu_stress"
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          parameters:
+            duration: "{{ cpu_test_duration }}"
+            cores: "{{ cpu_cores }}"
+            intensity: "{{ cpu_intensity }}"
+          baseline_metrics: "{{ baseline_metrics.stdout | from_json }}"
+          post_test_metrics: "{{ post_test_metrics.stdout | from_json }}"
+          test_output: "{{ stress_test_output.stdout }}"
+          return_code: "{{ stress_test_output.rc }}"
+          success: "{{ stress_test_output.rc == 0 }}"
+      tags: [results]
+
+    - name: Sauvegarder les résultats en JSON sur le serveur distant
+      copy:
+        content: "{{ test_results | to_nice_json }}"
+        dest: "{{ remote_test_dir }}/results/{{ results_file }}"
+        mode: '0644'
+      tags: [results]
+
+    - name: Récupérer les résultats localement
+      fetch:
+        src: "{{ remote_test_dir }}/results/{{ results_file }}"
+        dest: "{{ local_results_dir }}/{{ results_file }}"
+        flat: yes
+      tags: [results]
+
+    - name: Récupérer le fichier de log localement
+      fetch:
+        src: "{{ remote_test_dir }}/logs/{{ log_file }}"
+        dest: "{{ local_results_dir }}/{{ log_file }}"
+        flat: yes
+      when: stress_test_output.rc == 0
+      tags: [results]
+
+    # -------------------------------------------------------------------------
+    # Étape 7: Analyse et Rapport
+    # -------------------------------------------------------------------------
+    - name: Calculer les statistiques de performance
+      set_fact:
+        performance_stats:
+          cpu_increase: "{{ ((post_test_metrics.stdout | from_json).cpu_percent_total - (baseline_metrics.stdout | from_json).cpu_percent_total) | round(2) }}"
+          load_increase: "{{ ((post_test_metrics.stdout | from_json).load_average[0] - (baseline_metrics.stdout | from_json).load_average[0]) | round(2) }}"
+      tags: [analysis]
+
+    - name: Afficher le résumé des performances
+      debug:
+        msg:
+          - "=========================================="
+          - "📊 RÉSUMÉ DES PERFORMANCES CPU"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Test: {{ 'RÉUSSI ✅' if stress_test_output.rc == 0 else 'ÉCHOUÉ ❌' }}"
+          - ""
+          - "Métriques Baseline:"
+          - "  CPU moyen: {{ (baseline_metrics.stdout | from_json).cpu_percent_total | round(2) }}%"
+          - "  Load average: {{ (baseline_metrics.stdout | from_json).load_average[0] | round(2) }}"
+          - ""
+          - "Métriques Post-Test:"
+          - "  CPU moyen: {{ (post_test_metrics.stdout | from_json).cpu_percent_total | round(2) }}%"
+          - "  Load average: {{ (post_test_metrics.stdout | from_json).load_average[0] | round(2) }}"
+          - ""
+          - "Augmentation:"
+          - "  CPU: +{{ performance_stats.cpu_increase }}%"
+          - "  Load: +{{ performance_stats.load_increase }}"
+          - ""
+          - "Fichiers générés:"
+          - "  Résultats: {{ local_results_dir }}/{{ results_file }}"
+          - "  Log: {{ local_results_dir }}/{{ log_file }}"
+          - "=========================================="
+      tags: [summary]
+
+    # -------------------------------------------------------------------------
+    # Étape 8: Nettoyage (Optionnel)
+    # -------------------------------------------------------------------------
+    - name: Nettoyer les fichiers temporaires
+      file:
+        path: "{{ remote_test_dir }}/{{ item }}"
+        state: absent
+      loop:
+        - "stress_*.dat"
+      when: cleanup_after_test | bool
+      tags: [cleanup]
+
+# ============================================================================
+# Fin du Playbook
+# ============================================================================
+
+# Made with Bob

@@ -1,0 +1,180 @@
+---
+# ============================================================================
+# Variables de Configuration - Tests de Stress IBM i
+# ============================================================================
+# Fichier de configuration centralisé pour tous les playbooks de stress test
+# Modifiez ces valeurs selon vos besoins de test
+# ============================================================================
+
+# -----------------------------------------------------------------------------
+# Configuration Générale
+# -----------------------------------------------------------------------------
+# Répertoire distant sur IBM i pour les scripts de test
+remote_test_dir: "/tmp/ibmi_stress_tests"
+
+# Répertoire local pour les résultats
+local_results_dir: "./results"
+
+# Répertoire local pour les rapports
+local_reports_dir: "./reports"
+
+# Nettoyer les fichiers de test après exécution
+cleanup_after_test: true
+
+# Horodatage pour les fichiers de résultats
+timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+
+# -----------------------------------------------------------------------------
+# Configuration des Tests CPU
+# -----------------------------------------------------------------------------
+# Durée du test CPU en secondes (défaut: 5 minutes)
+cpu_test_duration: 300
+
+# Nombre de cœurs CPU à stresser (défaut: 4)
+cpu_cores: 4
+
+# Intensité du test CPU: low, medium, high, extreme
+cpu_intensity: "high"
+
+# -----------------------------------------------------------------------------
+# Configuration des Tests I/O
+# -----------------------------------------------------------------------------
+# Durée du test I/O en secondes (défaut: 5 minutes)
+io_test_duration: 300
+
+# Nombre de processus I/O parallèles
+io_processes: 2
+
+# Taille des fichiers de test en MB
+io_file_size_mb: 100
+
+# Type d'opération I/O: read, write, mixed
+io_operation: "mixed"
+
+# Répertoire pour les fichiers de test I/O sur IBM i
+io_test_directory: "/tmp/ibmi_io_stress"
+
+# -----------------------------------------------------------------------------
+# Configuration du Monitoring
+# -----------------------------------------------------------------------------
+# Intervalle de collecte des métriques en secondes
+monitor_interval: 5
+
+# Durée du monitoring en secondes (0 = infini)
+monitor_duration: 0
+
+# Collecter les métriques détaillées
+collect_detailed_metrics: true
+
+# Fichier de sortie pour les métriques
+monitor_output_file: "metrics_{{ timestamp }}.jsonl"
+
+# -----------------------------------------------------------------------------
+# Configuration de l'Orchestrateur
+# -----------------------------------------------------------------------------
+# Scénario prédéfini à exécuter
+# Options: demo_light, demo_standard, demo_intensive, cpu_only, io_only, full_stress
+orchestrator_scenario: "demo_standard"
+
+# Fichier de scénario personnalisé (optionnel)
+# orchestrator_custom_file: "/path/to/custom_scenario.json"
+
+# -----------------------------------------------------------------------------
+# Configuration Python
+# -----------------------------------------------------------------------------
+# Version Python à utiliser (python3 par défaut sur IBM i)
+python_executable: "python3"
+
+# Dépendances Python requises
+python_dependencies:
+  - psutil
+
+# Vérifier les dépendances avant l'exécution
+check_dependencies: true
+
+# -----------------------------------------------------------------------------
+# Configuration des Résultats
+# -----------------------------------------------------------------------------
+# Format de sauvegarde des résultats: json, yaml, both
+results_format: "json"
+
+# Conserver l'historique des résultats
+keep_results_history: true
+
+# Nombre de jours de rétention des résultats
+results_retention_days: 30
+
+# -----------------------------------------------------------------------------
+# Configuration des Rapports
+# -----------------------------------------------------------------------------
+# Générer un rapport HTML
+generate_html_report: true
+
+# Inclure les graphiques dans le rapport
+include_charts: true
+
+# Envoyer le rapport par email (nécessite configuration SMTP)
+send_email_report: false
+
+# Adresse email du destinataire
+# email_recipient: "admin@example.com"
+
+# -----------------------------------------------------------------------------
+# Configuration de la Validation de Performance
+# -----------------------------------------------------------------------------
+# Fichier baseline pour la comparaison
+# baseline_file: "results/baseline_20241216.json"
+
+# Seuils d'alerte pour la dégradation de performance (en %)
+performance_thresholds:
+  cpu_degradation_warning: 10
+  cpu_degradation_critical: 20
+  io_degradation_warning: 15
+  io_degradation_critical: 30
+  memory_increase_warning: 20
+  memory_increase_critical: 40
+
+# -----------------------------------------------------------------------------
+# Configuration Avancée
+# -----------------------------------------------------------------------------
+# Timeout pour les commandes (en secondes)
+command_timeout: 7200
+
+# Nombre de tentatives en cas d'échec
+max_retries: 3
+
+# Délai entre les tentatives (en secondes)
+retry_delay: 10
+
+# Mode verbeux pour le débogage
+verbose_mode: false
+
+# Pause entre les tests (en secondes)
+pause_between_tests: 30
+
+# -----------------------------------------------------------------------------
+# Configuration Spécifique IBM i
+# -----------------------------------------------------------------------------
+# Utilisateur IBM i pour l'exécution des tests
+# ibmi_user: "QSECOFR"
+
+# Bibliothèque pour les objets temporaires
+# ibmi_temp_library: "QTEMP"
+
+# Priorité des jobs de test (1-99, 50 = normal)
+job_priority: 50
+
+# Classe de jobs pour les tests
+# job_class: "QBATCH"
+
+# -----------------------------------------------------------------------------
+# Notes d'Utilisation
+# -----------------------------------------------------------------------------
+# Pour surcharger ces variables lors de l'exécution d'un playbook:
+# ansible-playbook playbook.yml --extra-vars "cpu_cores=8 cpu_intensity=extreme"
+#
+# Pour utiliser un fichier de variables personnalisé:
+# ansible-playbook playbook.yml --extra-vars "@my_custom_vars.yml"
+# ============================================================================
+
+# Made with Bob

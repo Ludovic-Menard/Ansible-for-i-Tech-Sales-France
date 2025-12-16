@@ -1,0 +1,317 @@
+---
+# ============================================================================
+# Playbook Ansible - Exécution des Tests de Stress I/O sur IBM i
+# ============================================================================
+# Ce playbook exécute des tests de stress I/O sur les serveurs IBM i
+# et collecte les métriques de performance disque
+# ============================================================================
+# Usage:
+#   ansible-playbook -i inventory.ini run_io_stress.yml
+#   ansible-playbook -i inventory.ini run_io_stress.yml --extra-vars "io_processes=4"
+#   ansible-playbook -i inventory.ini run_io_stress.yml --limit ibmi-test
+# ============================================================================
+
+- name: Exécution des Tests de Stress I/O sur IBM i
+  hosts: ibmi_stress_test
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  vars:
+    # Nom du fichier de résultats avec horodatage
+    results_file: "io_stress_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+    log_file: "io_stress_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.log"
+  
+  tasks:
+    # -------------------------------------------------------------------------
+    # Étape 1: Vérifications Préalables
+    # -------------------------------------------------------------------------
+    - name: Vérifier que les scripts sont déployés
+      stat:
+        path: "{{ remote_test_dir }}/ibmi_stress_io.py"
+      register: script_check
+      tags: [check]
+
+    - name: Erreur si le script n'est pas déployé
+      fail:
+        msg: |
+          Le script ibmi_stress_io.py n'est pas déployé sur {{ inventory_hostname }}.
+          Exécutez d'abord: ansible-playbook -i inventory.ini deploy_stress_tools.yml
+      when: not script_check.stat.exists
+      tags: [check]
+
+    - name: Vérifier l'espace disque disponible
+      shell: df -h {{ io_test_directory }} | tail -1 | awk '{print $4, $5}'
+      register: disk_space
+      changed_when: false
+      tags: [check]
+
+    - name: Afficher l'espace disque disponible
+      debug:
+        msg: "Espace disque: {{ disk_space.stdout }}"
+      tags: [check]
+
+    - name: Calculer l'espace requis pour le test
+      set_fact:
+        required_space_mb: "{{ (io_file_size_mb | int * io_processes | int * 2) }}"
+      tags: [check]
+
+    - name: Avertissement si l'espace disque est limité
+      debug:
+        msg: |
+          ATTENTION: Le test nécessite environ {{ required_space_mb }} MB d'espace disque.
+          Vérifiez que vous avez suffisamment d'espace disponible.
+      tags: [check]
+
+    # -------------------------------------------------------------------------
+    # Étape 2: Collecte des Métriques Disque Avant le Test
+    # -------------------------------------------------------------------------
+    - name: Collecter les métriques disque avant le test
+      shell: |
+        {{ python_executable }} -c "
+        import psutil
+        import json
+        disk_io = psutil.disk_io_counters()
+        disk_usage = psutil.disk_usage('{{ io_test_directory }}')
+        print(json.dumps({
+          'read_bytes': disk_io.read_bytes,
+          'write_bytes': disk_io.write_bytes,
+          'read_count': disk_io.read_count,
+          'write_count': disk_io.write_count,
+          'disk_total_gb': round(disk_usage.total / (1024**3), 2),
+          'disk_used_gb': round(disk_usage.used / (1024**3), 2),
+          'disk_free_gb': round(disk_usage.free / (1024**3), 2),
+          'disk_percent': disk_usage.percent
+        }))
+        "
+      register: baseline_metrics
+      changed_when: false
+      tags: [baseline]
+
+    - name: Afficher les métriques baseline
+      debug:
+        msg: "Métriques I/O avant test: {{ baseline_metrics.stdout | from_json }}"
+      tags: [baseline]
+
+    # -------------------------------------------------------------------------
+    # Étape 3: Préparation du Test
+    # -------------------------------------------------------------------------
+    - name: Créer le répertoire de test I/O
+      file:
+        path: "{{ io_test_directory }}"
+        state: directory
+        mode: '0755'
+      tags: [setup]
+
+    - name: Afficher les paramètres du test
+      debug:
+        msg:
+          - "=========================================="
+          - "🚀 LANCEMENT DU TEST DE STRESS I/O"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Durée: {{ io_test_duration }} secondes ({{ (io_test_duration / 60) | round(1) }} minutes)"
+          - "Nombre de processus: {{ io_processes }}"
+          - "Taille fichier: {{ io_file_size_mb }} MB"
+          - "Opération: {{ io_operation }}"
+          - "Répertoire: {{ io_test_directory }}"
+          - "Espace requis: ~{{ required_space_mb }} MB"
+          - "Fichier de résultats: {{ results_file }}"
+          - "=========================================="
+      tags: [info]
+
+    - name: Créer le répertoire de résultats local
+      local_action:
+        module: file
+        path: "{{ local_results_dir }}"
+        state: directory
+        mode: '0755'
+      run_once: true
+      tags: [setup]
+
+    # -------------------------------------------------------------------------
+    # Étape 4: Exécution du Test de Stress I/O
+    # -------------------------------------------------------------------------
+    - name: Exécuter le test de stress I/O
+      shell: |
+        cd {{ remote_test_dir }}
+        {{ python_executable }} ibmi_stress_io.py \
+          --duration {{ io_test_duration }} \
+          --processes {{ io_processes }} \
+          --directory {{ io_test_directory }} \
+          --file-size {{ io_file_size_mb }} \
+          --operation {{ io_operation }} \
+          {{ '--cleanup' if cleanup_after_test else '' }} \
+          2>&1 | tee logs/{{ log_file }}
+      register: stress_test_output
+      async: "{{ io_test_duration + 180 }}"
+      poll: 10
+      tags: [execute]
+
+    - name: Afficher la sortie du test
+      debug:
+        var: stress_test_output.stdout_lines
+      when: stress_test_output.stdout_lines is defined
+      tags: [execute]
+
+    # -------------------------------------------------------------------------
+    # Étape 5: Collecte des Métriques Après le Test
+    # -------------------------------------------------------------------------
+    - name: Attendre la stabilisation du système (30 secondes)
+      pause:
+        seconds: 30
+      tags: [post-test]
+
+    - name: Collecter les métriques disque après le test
+      shell: |
+        {{ python_executable }} -c "
+        import psutil
+        import json
+        disk_io = psutil.disk_io_counters()
+        disk_usage = psutil.disk_usage('{{ io_test_directory }}')
+        print(json.dumps({
+          'read_bytes': disk_io.read_bytes,
+          'write_bytes': disk_io.write_bytes,
+          'read_count': disk_io.read_count,
+          'write_count': disk_io.write_count,
+          'disk_total_gb': round(disk_usage.total / (1024**3), 2),
+          'disk_used_gb': round(disk_usage.used / (1024**3), 2),
+          'disk_free_gb': round(disk_usage.free / (1024**3), 2),
+          'disk_percent': disk_usage.percent
+        }))
+        "
+      register: post_test_metrics
+      changed_when: false
+      tags: [post-test]
+
+    - name: Afficher les métriques post-test
+      debug:
+        msg: "Métriques I/O après test: {{ post_test_metrics.stdout | from_json }}"
+      tags: [post-test]
+
+    # -------------------------------------------------------------------------
+    # Étape 6: Extraction et Analyse des Résultats
+    # -------------------------------------------------------------------------
+    - name: Calculer les statistiques I/O
+      set_fact:
+        io_stats:
+          bytes_read: "{{ ((post_test_metrics.stdout | from_json).read_bytes - (baseline_metrics.stdout | from_json).read_bytes) }}"
+          bytes_written: "{{ ((post_test_metrics.stdout | from_json).write_bytes - (baseline_metrics.stdout | from_json).write_bytes) }}"
+          read_operations: "{{ ((post_test_metrics.stdout | from_json).read_count - (baseline_metrics.stdout | from_json).read_count) }}"
+          write_operations: "{{ ((post_test_metrics.stdout | from_json).write_count - (baseline_metrics.stdout | from_json).write_count) }}"
+      tags: [analysis]
+
+    - name: Calculer les débits
+      set_fact:
+        throughput_stats:
+          read_mb_per_sec: "{{ ((io_stats.bytes_read | int) / (1024 * 1024) / io_test_duration) | round(2) }}"
+          write_mb_per_sec: "{{ ((io_stats.bytes_written | int) / (1024 * 1024) / io_test_duration) | round(2) }}"
+          total_gb: "{{ (((io_stats.bytes_read | int) + (io_stats.bytes_written | int)) / (1024**3)) | round(2) }}"
+      tags: [analysis]
+
+    - name: Créer le résumé des résultats
+      set_fact:
+        test_results:
+          hostname: "{{ inventory_hostname }}"
+          test_type: "io_stress"
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          parameters:
+            duration: "{{ io_test_duration }}"
+            processes: "{{ io_processes }}"
+            file_size_mb: "{{ io_file_size_mb }}"
+            operation: "{{ io_operation }}"
+            directory: "{{ io_test_directory }}"
+          baseline_metrics: "{{ baseline_metrics.stdout | from_json }}"
+          post_test_metrics: "{{ post_test_metrics.stdout | from_json }}"
+          io_statistics:
+            bytes_read: "{{ io_stats.bytes_read }}"
+            bytes_written: "{{ io_stats.bytes_written }}"
+            read_operations: "{{ io_stats.read_operations }}"
+            write_operations: "{{ io_stats.write_operations }}"
+            read_throughput_mbps: "{{ throughput_stats.read_mb_per_sec }}"
+            write_throughput_mbps: "{{ throughput_stats.write_mb_per_sec }}"
+            total_data_gb: "{{ throughput_stats.total_gb }}"
+          test_output: "{{ stress_test_output.stdout }}"
+          return_code: "{{ stress_test_output.rc }}"
+          success: "{{ stress_test_output.rc == 0 }}"
+      tags: [results]
+
+    - name: Sauvegarder les résultats en JSON sur le serveur distant
+      copy:
+        content: "{{ test_results | to_nice_json }}"
+        dest: "{{ remote_test_dir }}/results/{{ results_file }}"
+        mode: '0644'
+      tags: [results]
+
+    - name: Récupérer les résultats localement
+      fetch:
+        src: "{{ remote_test_dir }}/results/{{ results_file }}"
+        dest: "{{ local_results_dir }}/{{ results_file }}"
+        flat: yes
+      tags: [results]
+
+    - name: Récupérer le fichier de log localement
+      fetch:
+        src: "{{ remote_test_dir }}/logs/{{ log_file }}"
+        dest: "{{ local_results_dir }}/{{ log_file }}"
+        flat: yes
+      when: stress_test_output.rc == 0
+      tags: [results]
+
+    # -------------------------------------------------------------------------
+    # Étape 7: Rapport Final
+    # -------------------------------------------------------------------------
+    - name: Afficher le résumé des performances I/O
+      debug:
+        msg:
+          - "=========================================="
+          - "📊 RÉSUMÉ DES PERFORMANCES I/O"
+          - "=========================================="
+          - "Hôte: {{ inventory_hostname }}"
+          - "Test: {{ 'RÉUSSI ✅' if stress_test_output.rc == 0 else 'ÉCHOUÉ ❌' }}"
+          - ""
+          - "Données Transférées:"
+          - "  Lecture: {{ (io_stats.bytes_read | int / (1024**3)) | round(2) }} GB"
+          - "  Écriture: {{ (io_stats.bytes_written | int / (1024**3)) | round(2) }} GB"
+          - "  Total: {{ throughput_stats.total_gb }} GB"
+          - ""
+          - "Opérations:"
+          - "  Lectures: {{ io_stats.read_operations }}"
+          - "  Écritures: {{ io_stats.write_operations }}"
+          - ""
+          - "Débits:"
+          - "  Lecture: {{ throughput_stats.read_mb_per_sec }} MB/s"
+          - "  Écriture: {{ throughput_stats.write_mb_per_sec }} MB/s"
+          - ""
+          - "Utilisation Disque:"
+          - "  Avant: {{ (baseline_metrics.stdout | from_json).disk_percent }}%"
+          - "  Après: {{ (post_test_metrics.stdout | from_json).disk_percent }}%"
+          - ""
+          - "Fichiers générés:"
+          - "  Résultats: {{ local_results_dir }}/{{ results_file }}"
+          - "  Log: {{ local_results_dir }}/{{ log_file }}"
+          - "=========================================="
+      tags: [summary]
+
+    # -------------------------------------------------------------------------
+    # Étape 8: Nettoyage Final
+    # -------------------------------------------------------------------------
+    - name: Nettoyer le répertoire de test I/O
+      file:
+        path: "{{ io_test_directory }}"
+        state: absent
+      when: cleanup_after_test | bool
+      tags: [cleanup]
+
+    - name: Confirmer le nettoyage
+      debug:
+        msg: "✅ Répertoire de test {{ io_test_directory }} nettoyé"
+      when: cleanup_after_test | bool
+      tags: [cleanup]
+
+# ============================================================================
+# Fin du Playbook
+# ============================================================================
+
+# Made with Bob

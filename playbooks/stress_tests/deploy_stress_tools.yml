@@ -1,0 +1,245 @@
+---
+# ============================================================================
+# Playbook Ansible - Déploiement des Outils de Stress Test sur IBM i
+# ============================================================================
+# Ce playbook déploie les scripts Python de stress test sur les serveurs IBM i
+# et installe les dépendances nécessaires
+# ============================================================================
+# Usage:
+#   ansible-playbook -i inventory.ini deploy_stress_tools.yml
+#   ansible-playbook -i inventory.ini deploy_stress_tools.yml --limit ibmi-dev
+# ============================================================================
+
+- name: Déploiement des Outils de Stress Test IBM i
+  hosts: ibmi_stress_test
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  tasks:
+    # -------------------------------------------------------------------------
+    # Étape 1: Vérifications Préalables
+    # -------------------------------------------------------------------------
+    - name: Afficher les informations du système cible
+      debug:
+        msg:
+          - "Hôte: {{ inventory_hostname }}"
+          - "OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Architecture: {{ ansible_architecture }}"
+          - "Python: {{ ansible_python_version }}"
+      tags: [info]
+
+    - name: Vérifier la version de Python
+      command: "{{ python_executable }} --version"
+      register: python_version_check
+      changed_when: false
+      failed_when: false
+      tags: [check]
+
+    - name: Afficher la version de Python
+      debug:
+        msg: "Version Python détectée: {{ python_version_check.stdout }}"
+      when: python_version_check.rc == 0
+      tags: [check]
+
+    - name: Vérifier si pip3 est installé
+      command: pip3 --version
+      register: pip_check
+      changed_when: false
+      failed_when: false
+      tags: [check]
+
+    - name: Avertissement si pip3 n'est pas disponible
+      debug:
+        msg: "ATTENTION: pip3 n'est pas installé. L'installation des dépendances échouera."
+      when: pip_check.rc != 0
+      tags: [check]
+
+    # -------------------------------------------------------------------------
+    # Étape 2: Création de la Structure de Répertoires
+    # -------------------------------------------------------------------------
+    - name: Créer le répertoire principal des tests
+      file:
+        path: "{{ remote_test_dir }}"
+        state: directory
+        mode: '0755'
+      tags: [setup]
+
+    - name: Créer le répertoire pour les résultats
+      file:
+        path: "{{ remote_test_dir }}/results"
+        state: directory
+        mode: '0755'
+      tags: [setup]
+
+    - name: Créer le répertoire pour les logs
+      file:
+        path: "{{ remote_test_dir }}/logs"
+        state: directory
+        mode: '0755'
+      tags: [setup]
+
+    # -------------------------------------------------------------------------
+    # Étape 3: Copie des Scripts Python
+    # -------------------------------------------------------------------------
+    - name: Copier le script de stress CPU
+      copy:
+        src: "../../ibmi_stress_cpu.py"
+        dest: "{{ remote_test_dir }}/ibmi_stress_cpu.py"
+        mode: '0755'
+      tags: [deploy]
+
+    - name: Copier le script de stress I/O
+      copy:
+        src: "../../ibmi_stress_io.py"
+        dest: "{{ remote_test_dir }}/ibmi_stress_io.py"
+        mode: '0755'
+      tags: [deploy]
+
+    - name: Copier le script orchestrateur
+      copy:
+        src: "../../ibmi_stress_orchestrator.py"
+        dest: "{{ remote_test_dir }}/ibmi_stress_orchestrator.py"
+        mode: '0755'
+      tags: [deploy]
+
+    - name: Copier le script de monitoring
+      copy:
+        src: "../../ibmi_monitor.py"
+        dest: "{{ remote_test_dir }}/ibmi_monitor.py"
+        mode: '0755'
+      tags: [deploy]
+
+    - name: Copier le fichier requirements.txt
+      copy:
+        src: "files/requirements.txt"
+        dest: "{{ remote_test_dir }}/requirements.txt"
+        mode: '0644'
+      tags: [deploy]
+
+    # -------------------------------------------------------------------------
+    # Étape 4: Installation des Dépendances Python
+    # -------------------------------------------------------------------------
+    - name: Vérifier si psutil est déjà installé
+      command: "{{ python_executable }} -c 'import psutil; print(psutil.__version__)'"
+      register: psutil_check
+      changed_when: false
+      failed_when: false
+      tags: [dependencies]
+
+    - name: Afficher la version de psutil si installé
+      debug:
+        msg: "psutil version {{ psutil_check.stdout }} déjà installé"
+      when: psutil_check.rc == 0
+      tags: [dependencies]
+
+    - name: Installer les dépendances Python avec pip3
+      command: "pip3 install -r {{ remote_test_dir }}/requirements.txt"
+      when: 
+        - pip_check.rc == 0
+        - check_dependencies | bool
+        - psutil_check.rc != 0
+      register: pip_install
+      tags: [dependencies]
+
+    - name: Afficher le résultat de l'installation
+      debug:
+        var: pip_install.stdout_lines
+      when: pip_install is changed
+      tags: [dependencies]
+
+    # -------------------------------------------------------------------------
+    # Étape 5: Vérification du Déploiement
+    # -------------------------------------------------------------------------
+    - name: Vérifier que les scripts sont exécutables
+      stat:
+        path: "{{ remote_test_dir }}/{{ item }}"
+      register: script_stats
+      loop:
+        - ibmi_stress_cpu.py
+        - ibmi_stress_io.py
+        - ibmi_stress_orchestrator.py
+        - ibmi_monitor.py
+      tags: [verify]
+
+    - name: Afficher le statut des scripts
+      debug:
+        msg: "{{ item.item }}: {{ 'OK' if item.stat.exists and item.stat.executable else 'ERREUR' }}"
+      loop: "{{ script_stats.results }}"
+      tags: [verify]
+
+    - name: Test rapide du script CPU (--help)
+      command: "{{ python_executable }} {{ remote_test_dir }}/ibmi_stress_cpu.py --help"
+      register: cpu_help
+      changed_when: false
+      failed_when: false
+      tags: [verify]
+
+    - name: Afficher l'aide du script CPU
+      debug:
+        var: cpu_help.stdout_lines
+      when: cpu_help.rc == 0
+      tags: [verify]
+
+    # -------------------------------------------------------------------------
+    # Étape 6: Création d'un Script de Lancement Rapide
+    # -------------------------------------------------------------------------
+    - name: Créer un script de lancement rapide
+      copy:
+        dest: "{{ remote_test_dir }}/quick_test.sh"
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Script de lancement rapide pour les tests de stress
+          
+          SCRIPT_DIR="{{ remote_test_dir }}"
+          PYTHON="{{ python_executable }}"
+          
+          echo "=========================================="
+          echo "Tests de Stress IBM i - Lancement Rapide"
+          echo "=========================================="
+          echo ""
+          echo "Scripts disponibles:"
+          echo "  1. Test CPU:          $PYTHON $SCRIPT_DIR/ibmi_stress_cpu.py --duration 60 --cores 2"
+          echo "  2. Test I/O:          $PYTHON $SCRIPT_DIR/ibmi_stress_io.py --duration 60 --processes 1"
+          echo "  3. Orchestrateur:     $PYTHON $SCRIPT_DIR/ibmi_stress_orchestrator.py --scenario demo_light"
+          echo "  4. Monitoring:        $PYTHON $SCRIPT_DIR/ibmi_monitor.py --duration 60"
+          echo ""
+          echo "Exemple d'utilisation:"
+          echo "  cd $SCRIPT_DIR"
+          echo "  $PYTHON ibmi_stress_cpu.py --duration 120 --cores 4 --intensity high"
+          echo ""
+      tags: [setup]
+
+    # -------------------------------------------------------------------------
+    # Étape 7: Résumé du Déploiement
+    # -------------------------------------------------------------------------
+    - name: Résumé du déploiement
+      debug:
+        msg:
+          - "=========================================="
+          - "✅ DÉPLOIEMENT TERMINÉ AVEC SUCCÈS"
+          - "=========================================="
+          - "Répertoire: {{ remote_test_dir }}"
+          - "Scripts déployés:"
+          - "  - ibmi_stress_cpu.py"
+          - "  - ibmi_stress_io.py"
+          - "  - ibmi_stress_orchestrator.py"
+          - "  - ibmi_monitor.py"
+          - ""
+          - "Pour tester:"
+          - "  ssh {{ ansible_user }}@{{ inventory_hostname }}"
+          - "  cd {{ remote_test_dir }}"
+          - "  {{ python_executable }} ibmi_stress_cpu.py --duration 30 --cores 1"
+          - ""
+          - "Ou utilisez le script rapide:"
+          - "  {{ remote_test_dir }}/quick_test.sh"
+          - "=========================================="
+      tags: [summary]
+
+# ============================================================================
+# Fin du Playbook
+# ============================================================================
+
+# Made with Bob
