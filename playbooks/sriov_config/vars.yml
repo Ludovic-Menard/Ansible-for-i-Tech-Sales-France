@@ -1,0 +1,234 @@
+---
+###############################################################################
+# Variables de Configuration SR-IOV pour IBM i
+# Description: Variables pour la configuration automatisée SR-IOV
+# Instructions: Adapter ces valeurs à votre environnement
+###############################################################################
+
+###############################################################################
+# Configuration HMC (Hardware Management Console)
+###############################################################################
+
+# Adresse IP ou nom d'hôte de la HMC
+hmc_host: "hmc.example.com"
+
+# Utilisateur HMC (généralement hscroot)
+hmc_user: "hscroot"
+
+# Mot de passe HMC (utiliser ansible-vault en production)
+# hmc_password: "{{ vault_hmc_password }}"
+
+###############################################################################
+# Configuration de la Partition IBM i
+###############################################################################
+
+# Nom de la partition IBM i (tel que défini dans HMC)
+partition_name: "IBMI_PROD"
+
+# Nom du système géré (Managed System)
+# Exemple: Server-8284-22A, Server-9009-42A
+managed_system: "Server-8284-22A"
+
+###############################################################################
+# Configuration SR-IOV - Adaptateur Physique
+###############################################################################
+
+# ID de l'adaptateur SR-IOV physique
+# Pour obtenir: lshwres -r sriov --rsubtype adapter -m <managed_system>
+# Format: U78CB.001.WZS0CW5-P1-C2
+sriov_adapter_id: "U78CB.001.WZS0CW5-P1-C2"
+
+# Numéro de la Virtual Function (VF) à créer/utiliser
+# Commence généralement à 1
+sriov_vf_number: 1
+
+# Capacité allouée à cette VF (pourcentage de bande passante)
+# Valeur entre 1 et 100
+# Exemple: 10 = 10% de la bande passante totale de l'adaptateur
+sriov_capacity: 10
+
+# Capacité minimale garantie (optionnel)
+sriov_min_capacity: 5
+
+# Capacité maximale autorisée (optionnel)
+sriov_max_capacity: 20
+
+# Priorité de la VF (1-255, plus élevé = plus prioritaire)
+sriov_priority: 128
+
+###############################################################################
+# Configuration Réseau IBM i - Ligne de Communication
+###############################################################################
+
+# Nom de la ligne de communication (10 caractères max)
+line_description: "ETHLINE01"
+
+# Nom de ressource (obtenu via WRKHDWRSC TYPE(*CMN))
+# Sera détecté automatiquement si non spécifié
+# resource_name: "CMN05"
+
+# Vitesse de la ligne (AUTO, 1G, 10G, 25G, 40G)
+line_speed: "10G"
+
+# Mode duplex (FULL ou HALF)
+duplex_mode: "*FULL"
+
+# Démarrage automatique de la ligne
+auto_start: "*YES"
+
+# MTU (Maximum Transmission Unit)
+# 1500 = standard, 9000 = jumbo frames
+max_frame_size: 1500
+
+###############################################################################
+# Configuration Réseau IBM i - Interface TCP/IP
+###############################################################################
+
+# Nom de l'interface (10 caractères max)
+interface_name: "SRIOV01"
+
+# Adresse IP de l'interface
+ip_address: "192.168.100.50"
+
+# Masque de sous-réseau
+subnet_mask: "255.255.255.0"
+
+# Passerelle par défaut
+gateway: "192.168.100.1"
+
+# Serveurs DNS (optionnel)
+dns_servers:
+  - "192.168.100.10"
+  - "192.168.100.11"
+
+# Domaine DNS (optionnel)
+dns_domain: "example.com"
+
+###############################################################################
+# Configuration VLAN (optionnel)
+###############################################################################
+
+# Activer VLAN (true/false)
+enable_vlan: false
+
+# ID du VLAN (si enable_vlan = true)
+# vlan_id: 100
+
+# Priorité VLAN (0-7)
+# vlan_priority: 0
+
+###############################################################################
+# Configuration Avancée
+###############################################################################
+
+# Type de service (TOS) pour QoS
+# Valeur entre 0 et 255
+type_of_service: 0
+
+# Activer les statistiques détaillées
+enable_statistics: true
+
+# Timeout pour les opérations (secondes)
+operation_timeout: 300
+
+# Mode de vérification (strict, permissive)
+validation_mode: "strict"
+
+###############################################################################
+# Configuration de Sauvegarde/Rollback
+###############################################################################
+
+# Créer une sauvegarde avant modification
+create_backup: true
+
+# Répertoire de sauvegarde (sur le serveur Ansible)
+backup_directory: "/tmp/sriov_backups"
+
+# Activer le rollback automatique en cas d'échec
+auto_rollback: true
+
+###############################################################################
+# Configuration des Tests de Validation
+###############################################################################
+
+# Tests de connectivité
+validation_tests:
+  # Test ping vers la passerelle
+  ping_gateway: true
+  
+  # Test ping vers un serveur externe
+  ping_external: true
+  external_host: "8.8.8.8"
+  
+  # Test de résolution DNS
+  dns_resolution: true
+  test_hostname: "www.ibm.com"
+  
+  # Test de débit (nécessite iperf3)
+  bandwidth_test: false
+  iperf_server: "192.168.100.10"
+  
+  # Nombre de pings pour les tests
+  ping_count: 10
+  
+  # Timeout pour les tests (secondes)
+  test_timeout: 30
+
+###############################################################################
+# Configuration des Notifications
+###############################################################################
+
+# Envoyer des notifications par email
+send_notifications: false
+
+# Adresse email pour les notifications
+# notification_email: "admin@example.com"
+
+# Serveur SMTP
+# smtp_server: "smtp.example.com"
+# smtp_port: 25
+
+###############################################################################
+# Configuration du Logging
+###############################################################################
+
+# Niveau de log (debug, info, warning, error)
+log_level: "info"
+
+# Fichier de log (sur le serveur Ansible)
+log_file: "/var/log/ansible/sriov_config.log"
+
+# Conserver les logs pendant X jours
+log_retention_days: 30
+
+###############################################################################
+# Variables d'Environnement Spécifiques
+###############################################################################
+
+# Environnement (dev, test, prod)
+environment: "prod"
+
+# Tags pour identification
+tags:
+  project: "SR-IOV Configuration"
+  managed_by: "Ansible"
+  created_date: "2025-12-17"
+
+###############################################################################
+# Exemples de Configurations Multiples
+###############################################################################
+
+# Pour configurer plusieurs interfaces SR-IOV, créer des fichiers vars séparés
+# ou utiliser des dictionnaires:
+
+# sriov_interfaces:
+#   - name: "ETHLINE01"
+#     vf_number: 1
+#     ip_address: "192.168.100.50"
+#     vlan_id: 100
+#   - name: "ETHLINE02"
+#     vf_number: 2
+#     ip_address: "192.168.101.50"
+#     vlan_id: 101
+
+# Made with Bob

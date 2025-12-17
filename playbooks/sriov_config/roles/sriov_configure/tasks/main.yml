@@ -1,0 +1,297 @@
+---
+###############################################################################
+# Rôle: sriov_configure
+# Description: Configuration SR-IOV sur IBM i
+###############################################################################
+
+- name: "Banner - Début de la configuration SR-IOV"
+  debug:
+    msg:
+      - "════════════════════════════════════════════════════════"
+      - "  Phase 2: Configuration SR-IOV"
+      - "════════════════════════════════════════════════════════"
+
+###############################################################################
+# Sauvegarde de la configuration actuelle
+###############################################################################
+
+- name: "Créer le répertoire de sauvegarde"
+  file:
+    path: "{{ backup_directory }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+  when: create_backup | default(true)
+
+- name: "Sauvegarder la configuration réseau actuelle"
+  ibmi_sql_query:
+    sql: |
+      SELECT * FROM QSYS2.NETSTAT_INTERFACE_INFO
+  register: backup_interfaces
+  when: create_backup | default(true)
+
+- name: "Enregistrer la sauvegarde"
+  copy:
+    content: "{{ backup_interfaces | to_nice_json }}"
+    dest: "{{ backup_directory }}/network_backup_{{ ansible_date_time.date }}_{{ ansible_date_time.time | replace(':', '') }}.json"
+  delegate_to: localhost
+  when: create_backup | default(true)
+
+###############################################################################
+# Détection automatique de la ressource réseau
+###############################################################################
+
+- name: "Détecter automatiquement la ressource réseau SR-IOV"
+  ibmi_sql_query:
+    sql: |
+      SELECT RESOURCE_NAME, DESCRIPTION, RESOURCE_STATUS
+      FROM QSYS2.SYSTEM_HARDWARE_RESOURCE
+      WHERE RESOURCE_TYPE = 'CMN'
+        AND RESOURCE_STATUS = 'AVAILABLE'
+      ORDER BY RESOURCE_NAME
+      FETCH FIRST 1 ROW ONLY
+  register: detected_resource
+  when: resource_name is not defined
+
+- name: "Définir le nom de ressource"
+  set_fact:
+    resource_name: "{{ detected_resource.row[0].RESOURCE_NAME }}"
+  when: 
+    - resource_name is not defined
+    - detected_resource.row | length > 0
+
+- name: "Afficher la ressource sélectionnée"
+  debug:
+    msg: "Ressource réseau: {{ resource_name }}"
+
+###############################################################################
+# Suppression de la ligne existante si nécessaire
+###############################################################################
+
+- name: "Vérifier si la ligne existe déjà"
+  ibmi_sql_query:
+    sql: |
+      SELECT LINE_NAME, LINE_STATUS
+      FROM QSYS2.NETSTAT_LINE_INFO
+      WHERE LINE_NAME = '{{ line_description }}'
+  register: check_existing_line
+
+- name: "Arrêter la ligne existante"
+  ibmi_cl_command:
+    cmd: "VRYCFG CFGOBJ({{ line_description }}) CFGTYPE(*LIN) STATUS(*OFF)"
+  when: 
+    - check_existing_line.row | length > 0
+    - check_existing_line.row[0].LINE_STATUS != 'VARIED OFF'
+  ignore_errors: yes
+
+- name: "Supprimer la ligne existante"
+  ibmi_cl_command:
+    cmd: "DLTLINETH LIND({{ line_description }})"
+  when: check_existing_line.row | length > 0
+  ignore_errors: yes
+
+###############################################################################
+# Création de la ligne de communication SR-IOV
+###############################################################################
+
+- name: "Générer le script CL de création de ligne"
+  template:
+    src: create_line.cl
+    dest: "/tmp/create_line_{{ line_description }}.cl"
+
+- name: "Créer la ligne de communication Ethernet"
+  ibmi_cl_command:
+    cmd: |
+      CRTLINETH LIND({{ line_description }}) 
+                RSRCNAME({{ resource_name }}) 
+                LINESPEED({{ line_speed }}) 
+                DUPLEX({{ duplex_mode }}) 
+                AUTOSTART({{ auto_start }})
+                MAXFRAME({{ max_frame_size }})
+  register: create_line_result
+
+- name: "Afficher le résultat de création de ligne"
+  debug:
+    msg: "✓ Ligne {{ line_description }} créée avec succès"
+  when: create_line_result is succeeded
+
+###############################################################################
+# Démarrage de la ligne
+###############################################################################
+
+- name: "Démarrer la ligne de communication"
+  ibmi_cl_command:
+    cmd: "VRYCFG CFGOBJ({{ line_description }}) CFGTYPE(*LIN) STATUS(*ON)"
+  register: vary_on_result
+  retries: 3
+  delay: 5
+  until: vary_on_result is succeeded
+
+- name: "Vérifier le statut de la ligne"
+  ibmi_sql_query:
+    sql: |
+      SELECT LINE_NAME, LINE_STATUS, RESOURCE_NAME
+      FROM QSYS2.NETSTAT_LINE_INFO
+      WHERE LINE_NAME = '{{ line_description }}'
+  register: line_status
+
+- name: "Afficher le statut de la ligne"
+  debug:
+    msg: "Ligne {{ line_description }}: {{ line_status.row[0].LINE_STATUS }}"
+
+- name: "Vérifier que la ligne est active"
+  assert:
+    that:
+      - line_status.row[0].LINE_STATUS == 'ACTIVE'
+    fail_msg: "La ligne {{ line_description }} n'est pas active"
+    success_msg: "✓ Ligne {{ line_description }} active"
+
+###############################################################################
+# Configuration TCP/IP
+###############################################################################
+
+- name: "Vérifier si l'interface TCP/IP existe"
+  ibmi_sql_query:
+    sql: |
+      SELECT INTERFACE_NAME, INTERNET_ADDRESS
+      FROM QSYS2.NETSTAT_INTERFACE_INFO
+      WHERE INTERFACE_NAME = '{{ interface_name }}'
+  register: check_interface
+
+- name: "Supprimer l'interface existante si nécessaire"
+  ibmi_cl_command:
+    cmd: "RMVTCPIFC INTNETADR('{{ check_interface.row[0].INTERNET_ADDRESS }}')"
+  when: check_interface.row | length > 0
+  ignore_errors: yes
+
+- name: "Générer le script CL de configuration TCP/IP"
+  template:
+    src: configure_tcp.cl
+    dest: "/tmp/configure_tcp_{{ interface_name }}.cl"
+
+- name: "Ajouter l'interface TCP/IP"
+  ibmi_cl_command:
+    cmd: |
+      ADDTCPIFC INTNETADR('{{ ip_address }}') 
+                LIND({{ line_description }}) 
+                SUBNETMASK('{{ subnet_mask }}')
+                INTNETADRDSC('{{ interface_name }}')
+                AUTOSTART(*YES)
+  register: add_interface_result
+
+- name: "Afficher le résultat de création d'interface"
+  debug:
+    msg: "✓ Interface {{ interface_name }} créée avec succès"
+  when: add_interface_result is succeeded
+
+###############################################################################
+# Démarrage de l'interface TCP/IP
+###############################################################################
+
+- name: "Démarrer l'interface TCP/IP"
+  ibmi_cl_command:
+    cmd: "STRTCPIFC INTNETADR('{{ ip_address }}')"
+  register: start_interface_result
+  retries: 3
+  delay: 5
+  until: start_interface_result is succeeded
+
+- name: "Attendre que l'interface soit active"
+  pause:
+    seconds: 10
+
+- name: "Vérifier le statut de l'interface"
+  ibmi_sql_query:
+    sql: |
+      SELECT INTERFACE_NAME, INTERNET_ADDRESS, INTERFACE_STATUS, LINE_DESCRIPTION
+      FROM QSYS2.NETSTAT_INTERFACE_INFO
+      WHERE INTERNET_ADDRESS = '{{ ip_address }}'
+  register: interface_status
+
+- name: "Afficher le statut de l'interface"
+  debug:
+    msg: 
+      - "Interface: {{ interface_status.row[0].INTERFACE_NAME }}"
+      - "Adresse IP: {{ interface_status.row[0].INTERNET_ADDRESS }}"
+      - "Statut: {{ interface_status.row[0].INTERFACE_STATUS }}"
+      - "Ligne: {{ interface_status.row[0].LINE_DESCRIPTION }}"
+
+###############################################################################
+# Configuration de la route par défaut
+###############################################################################
+
+- name: "Vérifier si une route par défaut existe"
+  ibmi_sql_query:
+    sql: |
+      SELECT ROUTE_DESTINATION, NEXT_HOP
+      FROM QSYS2.NETSTAT_ROUTE_INFO
+      WHERE ROUTE_TYPE = '*DFTROUTE'
+  register: existing_routes
+
+- name: "Ajouter la route par défaut"
+  ibmi_cl_command:
+    cmd: "ADDTCPRTE RTEDEST(*DFTROUTE) NEXTHOP('{{ gateway }}')"
+  when: existing_routes.row | length == 0
+  ignore_errors: yes
+
+- name: "Changer la route par défaut si nécessaire"
+  ibmi_cl_command:
+    cmd: "CHGTCPRTE RTEDEST(*DFTROUTE) NEXTHOP('{{ gateway }}')"
+  when: 
+    - existing_routes.row | length > 0
+    - existing_routes.row[0].NEXT_HOP != gateway
+  ignore_errors: yes
+
+###############################################################################
+# Configuration DNS (optionnel)
+###############################################################################
+
+- name: "Configurer les serveurs DNS"
+  ibmi_cl_command:
+    cmd: "CHGTCPDMN INTNETADR('{{ item }}') DMNNAME('{{ dns_domain }}')"
+  loop: "{{ dns_servers }}"
+  when: 
+    - dns_servers is defined
+    - dns_domain is defined
+  ignore_errors: yes
+
+###############################################################################
+# Configuration VLAN (optionnel)
+###############################################################################
+
+- name: "Configurer le VLAN"
+  ibmi_cl_command:
+    cmd: "CHGLINETH LIND({{ line_description }}) VLANID({{ vlan_id }})"
+  when: 
+    - enable_vlan | default(false)
+    - vlan_id is defined
+  ignore_errors: yes
+
+###############################################################################
+# Nettoyage des fichiers temporaires
+###############################################################################
+
+- name: "Supprimer les scripts CL temporaires"
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/tmp/create_line_{{ line_description }}.cl"
+    - "/tmp/configure_tcp_{{ interface_name }}.cl"
+  ignore_errors: yes
+
+###############################################################################
+# Résumé de la configuration
+###############################################################################
+
+- name: "Banner - Fin de la configuration"
+  debug:
+    msg:
+      - "════════════════════════════════════════════════════════"
+      - "  ✓ Configuration SR-IOV Terminée"
+      - "  Ligne: {{ line_description }}"
+      - "  Interface: {{ interface_name }}"
+      - "  IP: {{ ip_address }}"
+      - "════════════════════════════════════════════════════════"
+
+# Made with Bob

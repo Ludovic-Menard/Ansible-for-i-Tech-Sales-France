@@ -1,0 +1,279 @@
+---
+# Variables de configuration pour IBM i Migrate While Active
+# Adapter selon votre environnement
+
+# Configuration générale
+migration:
+  project_name: "IBM i Migration"
+  migration_date: "2025-12-20"
+  maintenance_window:
+    start: "20:00"
+    end: "23:00"
+    timezone: "Europe/Paris"
+
+# Configuration réseau
+network:
+  production:
+    vlan: 10
+    subnet: "192.168.1.0/24"
+    gateway: "192.168.1.1"
+    dns_servers:
+      - "192.168.1.2"
+      - "192.168.1.3"
+  
+  replication:
+    vlan: 100
+    subnet: "10.0.1.0/24"
+    mtu: 9000  # Jumbo frames
+    bandwidth: "10G"
+  
+  migration:
+    vlan: 200
+    subnet: "10.0.2.0/24"
+
+# Configuration des partitions
+partitions:
+  source:
+    name: "IBMISOURCE"
+    ip_production: "192.168.1.10"
+    ip_replication: "10.0.1.10"
+    system_name: "IBMISRC"
+    
+  target:
+    name: "IBMICIBLE"
+    ip_production: "192.168.1.11"
+    ip_replication: "10.0.1.11"
+    system_name: "IBMITGT"
+    # Après migration, prendra l'IP de la source
+    final_ip_production: "192.168.1.10"
+
+# Prérequis versions
+prerequisites:
+  ibmi:
+    minimum_version: "7.2"
+    recommended_version: "7.4"
+  
+  ptf_groups:
+    - "SF99722"  # Technology Refresh
+    - "SF99713"  # Hiper Group
+    - "SF99368"  # PowerHA Group
+  
+  licensed_programs:
+    - "5770SS1"  # IBM i Base
+    - "5770TC1"  # TCP/IP Connectivity
+    - "5770XE1"  # PowerHA (optionnel)
+    - "5770DG1"  # HTTP Server
+
+# Configuration du stockage
+storage:
+  minimum_space_gb: 200
+  asp_configuration:
+    system_asp: 1
+    user_asp_start: 2
+    user_asp_end: 32
+  
+  backup_location: "/backup"
+  savf_library: "QGPL"
+
+# Configuration de la réplication
+replication:
+  type: "powerha"  # powerha ou storage
+  mode: "async"    # sync ou async
+  
+  powerha:
+    cluster_name: "MIGRCLUSTER"
+    crg_name: "MIGRATIONCRG"
+    
+  monitoring:
+    interval_seconds: 60
+    alert_threshold_lag_seconds: 300
+
+# Configuration des sauvegardes
+backup:
+  full_backup:
+    enabled: true
+    libraries: "*ALLUSR"
+    include_config: true
+    include_security: true
+  
+  incremental:
+    enabled: true
+    frequency_hours: 4
+  
+  retention:
+    days: 30
+    location: "/backup/migration"
+
+# Utilisateurs
+users:
+  replication:
+    username: "REPLUSER"
+    password: "{{ vault_replication_password }}"
+    user_class: "*SECOFR"
+    special_authorities:
+      - "*ALLOBJ"
+      - "*IOSYSCFG"
+      - "*SECADM"
+  
+  ansible:
+    username: "ANSIBLE"
+    password: "{{ vault_ansible_password }}"
+    user_class: "*SECOFR"
+    special_authorities:
+      - "*ALLOBJ"
+      - "*IOSYSCFG"
+
+# Sécurité
+security:
+  qsecurity_level: 40
+  qretsvrsec: "*YES"
+  qalwusrdmn: "*ALL"
+  
+  ssl:
+    enabled: true
+    certificate_store: "SYSTEM"
+
+# Tests et validation
+validation:
+  connectivity_tests:
+    - type: "ping"
+      target: "gateway"
+      count: 10
+    - type: "ping"
+      target: "dns"
+      count: 10
+    - type: "ping"
+      target: "peer"
+      count: 100
+  
+  performance_tests:
+    cpu_threshold_percent: 80
+    memory_threshold_percent: 85
+    disk_io_threshold_iops: 5000
+  
+  data_integrity:
+    checksum_validation: true
+    record_count_validation: true
+    critical_libraries:
+      - "APPLIB"
+      - "DATALIB"
+      - "CUSTLIB"
+
+# Monitoring post-migration
+monitoring:
+  duration_days: 7
+  intensive_monitoring_hours: 24
+  
+  metrics:
+    - "cpu_usage"
+    - "memory_usage"
+    - "disk_io"
+    - "network_throughput"
+    - "active_jobs"
+    - "response_time"
+  
+  alerts:
+    email:
+      enabled: true
+      recipients:
+        - "admin@example.com"
+        - "ops@example.com"
+    
+    slack:
+      enabled: false
+      webhook_url: "{{ vault_slack_webhook }}"
+    
+    thresholds:
+      cpu_percent: 90
+      memory_percent: 90
+      disk_io_latency_ms: 50
+
+# Notifications
+notifications:
+  enabled: true
+  
+  email:
+    smtp_server: "smtp.example.com"
+    smtp_port: 587
+    smtp_use_tls: true
+    smtp_username: "ansible@example.com"
+    smtp_password: "{{ vault_smtp_password }}"
+    from_address: "ansible@example.com"
+    to_addresses:
+      - "admin@example.com"
+      - "ops@example.com"
+  
+  events:
+    - "migration_start"
+    - "migration_complete"
+    - "migration_failed"
+    - "validation_complete"
+    - "alert_triggered"
+
+# Rollback
+rollback:
+  enabled: true
+  automatic: false
+  
+  triggers:
+    - "migration_timeout"
+    - "critical_error"
+    - "validation_failed"
+  
+  timeout_minutes: 120
+
+# Rapports
+reporting:
+  output_directory: "./reports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"
+  
+  include:
+    - "prerequisites_check"
+    - "sync_status"
+    - "migration_timeline"
+    - "validation_results"
+    - "performance_metrics"
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "./logs/migration.log"
+  max_size_mb: 100
+  backup_count: 5
+
+# Timeouts (en secondes)
+timeouts:
+  command_execution: 300
+  backup_operation: 3600
+  restore_operation: 3600
+  sync_operation: 7200
+  migration_total: 7200
+
+# Chemins
+paths:
+  temp_directory: "/tmp/migration"
+  backup_directory: "/backup/migration"
+  reports_directory: "./reports"
+  logs_directory: "./logs"
+
+# Options avancées
+advanced:
+  parallel_operations: true
+  max_parallel_jobs: 4
+  
+  compression:
+    enabled: true
+    level: 6  # 1-9
+  
+  verification:
+    deep_scan: true
+    sample_percentage: 10
+  
+  performance_tuning:
+    tcp_window_size: 65536
+    buffer_size: 8192
+
+# Made with Bob

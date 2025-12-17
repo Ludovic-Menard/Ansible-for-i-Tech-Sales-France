@@ -1,0 +1,31 @@
+---
+###############################################################################
+# Valeurs par défaut pour le rôle sriov_configure
+###############################################################################
+
+# Répertoire de sauvegarde
+backup_directory: "/tmp/sriov_backups"
+
+# Créer une sauvegarde avant modification
+create_backup: true
+
+# Paramètres de ligne par défaut
+line_speed: "10G"
+duplex_mode: "*FULL"
+auto_start: "*YES"
+max_frame_size: 1500
+
+# Type de service (QoS)
+type_of_service: 0
+
+# Configuration VLAN
+enable_vlan: false
+
+# Timeout pour les opérations (secondes)
+operation_timeout: 300
+
+# Nombre de tentatives pour les opérations critiques
+max_retries: 3
+retry_delay: 5
+
+# Made with Bob

@@ -1,0 +1,23 @@
+---
+###############################################################################
+# Valeurs par défaut pour le rôle sriov_check
+###############################################################################
+
+# Répertoire de sauvegarde par défaut
+backup_directory: "/tmp/sriov_backups"
+
+# Mode de validation (strict ou permissive)
+validation_mode: "strict"
+
+# Versions minimales supportées
+min_ibmi_version: 7.3
+min_ibmi_release: 0
+
+# Seuils d'alerte
+disk_space_warning_threshold: 80  # Pourcentage
+disk_space_critical_threshold: 90  # Pourcentage
+
+# Timeout pour les vérifications (secondes)
+check_timeout: 60
+
+# Made with Bob

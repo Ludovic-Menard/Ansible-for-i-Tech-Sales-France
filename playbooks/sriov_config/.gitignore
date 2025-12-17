@@ -1,0 +1,84 @@
+# Fichiers de configuration SR-IOV - .gitignore
+
+# Fichiers de sauvegarde
+*.bak
+*.backup
+*~
+
+# Fichiers temporaires
+*.tmp
+*.temp
+/tmp/
+
+# Logs
+*.log
+logs/
+*.out
+
+# Rapports générés
+reports/
+*_report_*.txt
+*_report_*.html
+check_report_*.txt
+validation_report_*.txt
+
+# Sauvegardes de configuration
+backups/
+*.json.backup
+network_backup_*.json
+
+# Fichiers sensibles (mots de passe, clés)
+*.vault
+vault.yml
+secrets.yml
+*.key
+*.pem
+*.crt
+
+# Variables d'environnement
+.env
+.env.local
+
+# Fichiers Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Fichiers Ansible
+*.retry
+.ansible/
+ansible.log
+
+# Fichiers de cache
+.cache/
+*.cache
+
+# Fichiers IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Fichiers de test
+test_results/
+*.test
+
+# Fichiers générés par les templates
+/tmp/*.cl
+*.cl.generated
+
+# Inventaires avec données sensibles (garder inventory.ini comme exemple)
+inventory_prod.ini
+inventory_production.ini
+hosts_prod.ini
+
+# Résultats de validation
+validation_results/
+performance_results/

@@ -1,0 +1,247 @@
+---
+# Playbook: Vérification des prérequis pour IBM i Migrate While Active
+# Description: Vérifie que toutes les conditions sont remplies avant la migration
+
+- name: Vérification des prérequis IBM i Migrate While Active
+  hosts: ibmi_all
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Collecter les informations système
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: "SELECT * FROM SYSIBMADM.ENV_SYS_INFO"
+      register: system_info
+
+    - name: Afficher les informations système
+      debug:
+        msg: 
+          - "Système: {{ system_info.row[0].HOST_NAME }}"
+          - "Version: {{ system_info.row[0].OS_VERSION }}"
+          - "Niveau: {{ system_info.row[0].OS_RELEASE }}"
+
+    - name: Vérifier la version IBM i
+      assert:
+        that:
+          - "system_info.row[0].OS_VERSION | int >= 7"
+          - "system_info.row[0].OS_RELEASE | int >= 2"
+        fail_msg: "Version IBM i insuffisante. Minimum requis: 7.2"
+        success_msg: "Version IBM i compatible: {{ system_info.row[0].OS_VERSION }}.{{ system_info.row[0].OS_RELEASE }}"
+
+    - name: Vérifier l'espace disque disponible
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            ASP_NUMBER,
+            TOTAL_CAPACITY_AVAILABLE / 1024 / 1024 AS TOTAL_GB,
+            STORAGE_CAPACITY_USED / 1024 / 1024 AS USED_GB,
+            (TOTAL_CAPACITY_AVAILABLE - STORAGE_CAPACITY_USED) / 1024 / 1024 AS FREE_GB,
+            (STORAGE_CAPACITY_USED * 100.0 / TOTAL_CAPACITY_AVAILABLE) AS USED_PERCENT
+          FROM QSYS2.ASP_INFO
+          WHERE ASP_NUMBER = 1
+      register: disk_space
+
+    - name: Afficher l'espace disque
+      debug:
+        msg:
+          - "ASP 1 - Total: {{ disk_space.row[0].TOTAL_GB | round(2) }} GB"
+          - "ASP 1 - Utilisé: {{ disk_space.row[0].USED_GB | round(2) }} GB"
+          - "ASP 1 - Libre: {{ disk_space.row[0].FREE_GB | round(2) }} GB"
+          - "ASP 1 - Utilisation: {{ disk_space.row[0].USED_PERCENT | round(2) }}%"
+
+    - name: Vérifier l'espace disque minimum
+      assert:
+        that:
+          - "disk_space.row[0].FREE_GB | float >= storage.minimum_space_gb"
+        fail_msg: "Espace disque insuffisant. Minimum requis: {{ storage.minimum_space_gb }} GB"
+        success_msg: "Espace disque suffisant: {{ disk_space.row[0].FREE_GB | round(2) }} GB disponibles"
+
+    - name: Vérifier les PTF Groups installés
+      ibm.power_ibmi.ibmi_cl_command:
+        cmd: "DSPPTFGRP"
+      register: ptf_groups
+      ignore_errors: true
+
+    - name: Vérifier la configuration TCP/IP
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            INTERNET_ADDRESS,
+            LINE_DESCRIPTION,
+            INTERFACE_STATUS,
+            INTERFACE_LINE_TYPE,
+            MAXIMUM_TRANSMISSION_UNIT
+          FROM QSYS2.NETSTAT_INTERFACE_INFO
+          WHERE INTERFACE_STATUS = 'ACTIVE'
+      register: network_interfaces
+
+    - name: Afficher les interfaces réseau actives
+      debug:
+        msg: "{{ network_interfaces.row }}"
+
+    - name: Vérifier la connectivité réseau - Gateway
+      ibm.power_ibmi.ibmi_cl_command:
+        cmd: "PING RMTSYS('{{ network.production.gateway }}') NBRPKT(5)"
+      register: ping_gateway
+      ignore_errors: true
+
+    - name: Vérifier la connectivité réseau - DNS
+      ibm.power_ibmi.ibmi_cl_command:
+        cmd: "PING RMTSYS('{{ network.production.dns_servers[0] }}') NBRPKT(5)"
+      register: ping_dns
+      ignore_errors: true
+
+    - name: Vérifier la connectivité entre partitions
+      ibm.power_ibmi.ibmi_cl_command:
+        cmd: "PING RMTSYS('{{ hostvars[item].ansible_host }}') NBRPKT(10)"
+      loop: "{{ groups['ibmi_all'] }}"
+      when: item != inventory_hostname
+      register: ping_peer
+      ignore_errors: true
+
+    - name: Vérifier les programmes sous licence
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            PRODUCT_ID,
+            PRODUCT_OPTION,
+            RELEASE_LEVEL,
+            PRODUCT_LOAD
+          FROM QSYS2.PRODUCT_INFO
+          WHERE PRODUCT_ID IN ('5770SS1', '5770TC1', '5770XE1', '5770DG1')
+      register: licensed_programs
+
+    - name: Afficher les programmes sous licence
+      debug:
+        msg: "{{ licensed_programs.row }}"
+
+    - name: Vérifier le niveau de sécurité
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: "SELECT SYSTEM_VALUE_NAME, CURRENT_NUMERIC_VALUE FROM QSYS2.SYSTEM_VALUE_INFO WHERE SYSTEM_VALUE_NAME = 'QSECURITY'"
+      register: security_level
+
+    - name: Afficher le niveau de sécurité
+      debug:
+        msg: "Niveau de sécurité: {{ security_level.row[0].CURRENT_NUMERIC_VALUE }}"
+
+    - name: Vérifier les jobs actifs
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            COUNT(*) AS ACTIVE_JOBS,
+            SUM(CASE WHEN JOB_TYPE = 'BATCH' THEN 1 ELSE 0 END) AS BATCH_JOBS,
+            SUM(CASE WHEN JOB_TYPE = 'INTERACTIVE' THEN 1 ELSE 0 END) AS INTERACTIVE_JOBS
+          FROM TABLE(QSYS2.ACTIVE_JOB_INFO())
+      register: active_jobs
+
+    - name: Afficher les jobs actifs
+      debug:
+        msg:
+          - "Total jobs actifs: {{ active_jobs.row[0].ACTIVE_JOBS }}"
+          - "Jobs batch: {{ active_jobs.row[0].BATCH_JOBS }}"
+          - "Jobs interactifs: {{ active_jobs.row[0].INTERACTIVE_JOBS }}"
+
+    - name: Vérifier les subsystèmes actifs
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            SUBSYSTEM_NAME,
+            STATUS,
+            CURRENT_ACTIVE_JOBS,
+            MAXIMUM_ACTIVE_JOBS
+          FROM QSYS2.SUBSYSTEM_INFO
+          WHERE STATUS = 'ACTIVE'
+      register: subsystems
+
+    - name: Afficher les subsystèmes actifs
+      debug:
+        msg: "{{ subsystems.row }}"
+
+    - name: Vérifier l'utilisateur de réplication
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            AUTHORIZATION_NAME,
+            USER_CLASS_NAME,
+            STATUS
+          FROM QSYS2.USER_INFO
+          WHERE AUTHORIZATION_NAME = '{{ users.replication.username }}'
+      register: repl_user
+      ignore_errors: true
+
+    - name: Collecter les résultats de vérification
+      set_fact:
+        prerequisites_results:
+          system_info:
+            hostname: "{{ system_info.row[0].HOST_NAME }}"
+            version: "{{ system_info.row[0].OS_VERSION }}.{{ system_info.row[0].OS_RELEASE }}"
+            serial: "{{ system_info.row[0].SYSTEM_SERIAL_NUMBER }}"
+          disk_space:
+            total_gb: "{{ disk_space.row[0].TOTAL_GB | round(2) }}"
+            used_gb: "{{ disk_space.row[0].USED_GB | round(2) }}"
+            free_gb: "{{ disk_space.row[0].FREE_GB | round(2) }}"
+            used_percent: "{{ disk_space.row[0].USED_PERCENT | round(2) }}"
+          network:
+            interfaces_count: "{{ network_interfaces.row | length }}"
+            gateway_reachable: "{{ ping_gateway.rc == 0 }}"
+            dns_reachable: "{{ ping_dns.rc == 0 }}"
+            peer_reachable: "{{ ping_peer.rc == 0 if ping_peer.rc is defined else 'N/A' }}"
+          jobs:
+            total: "{{ active_jobs.row[0].ACTIVE_JOBS }}"
+            batch: "{{ active_jobs.row[0].BATCH_JOBS }}"
+            interactive: "{{ active_jobs.row[0].INTERACTIVE_JOBS }}"
+          security:
+            level: "{{ security_level.row[0].CURRENT_NUMERIC_VALUE }}"
+          replication_user:
+            exists: "{{ repl_user.row | length > 0 }}"
+
+    - name: Sauvegarder les résultats
+      local_action:
+        module: copy
+        content: "{{ prerequisites_results | to_nice_json }}"
+        dest: "./reports/prerequisites_{{ inventory_hostname }}_{{ ansible_date_time.iso8601_basic_short }}.json"
+
+- name: Générer le rapport de prérequis
+  hosts: localhost
+  gather_facts: false
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: Créer le répertoire de rapports
+      file:
+        path: "{{ reporting.output_directory }}"
+        state: directory
+        mode: '0755'
+
+    - name: Générer le rapport HTML
+      template:
+        src: templates/prerequisites_report.html.j2
+        dest: "{{ reporting.output_directory }}/prerequisites_report_{{ ansible_date_time.iso8601_basic_short }}.html"
+      vars:
+        report_date: "{{ ansible_date_time.iso8601 }}"
+        source_results: "{{ hostvars['source'].prerequisites_results }}"
+        target_results: "{{ hostvars['target'].prerequisites_results }}"
+
+    - name: Afficher le chemin du rapport
+      debug:
+        msg: "Rapport généré: {{ reporting.output_directory }}/prerequisites_report_{{ ansible_date_time.iso8601_basic_short }}.html"
+
+    - name: Résumé des vérifications
+      debug:
+        msg:
+          - "=== RÉSUMÉ DES PRÉREQUIS ==="
+          - "Source: {{ hostvars['source'].prerequisites_results.system_info.hostname }}"
+          - "  Version: {{ hostvars['source'].prerequisites_results.system_info.version }}"
+          - "  Espace libre: {{ hostvars['source'].prerequisites_results.disk_space.free_gb }} GB"
+          - "  Gateway: {{ 'OK' if hostvars['source'].prerequisites_results.network.gateway_reachable else 'ERREUR' }}"
+          - ""
+          - "Cible: {{ hostvars['target'].prerequisites_results.system_info.hostname }}"
+          - "  Version: {{ hostvars['target'].prerequisites_results.system_info.version }}"
+          - "  Espace libre: {{ hostvars['target'].prerequisites_results.disk_space.free_gb }} GB"
+          - "  Gateway: {{ 'OK' if hostvars['target'].prerequisites_results.network.gateway_reachable else 'ERREUR' }}"
+          - ""
+          - "Connectivité inter-partitions: {{ 'OK' if hostvars['source'].prerequisites_results.network.peer_reachable else 'ERREUR' }}"
+
+# Made with Bob

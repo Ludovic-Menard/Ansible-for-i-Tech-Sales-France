@@ -1,0 +1,226 @@
+---
+###############################################################################
+# Rôle: sriov_check
+# Description: Vérification des prérequis pour la configuration SR-IOV
+###############################################################################
+
+- name: "Banner - Début de la vérification des prérequis"
+  debug:
+    msg:
+      - "════════════════════════════════════════════════════════"
+      - "  Phase 1: Vérification des Prérequis SR-IOV"
+      - "════════════════════════════════════════════════════════"
+
+###############################################################################
+# Vérification de la version IBM i
+###############################################################################
+
+- name: "Vérifier la version d'IBM i"
+  ibmi_sql_query:
+    sql: "SELECT OS_VERSION, OS_LEVEL FROM QSYS2.SYSTEM_STATUS_INFO"
+  register: os_version
+
+- name: "Afficher la version IBM i"
+  debug:
+    msg: "Version IBM i: {{ os_version.row[0].OS_VERSION }} {{ os_version.row[0].OS_LEVEL }}"
+
+- name: "Vérifier que la version est supportée (7.3+)"
+  assert:
+    that:
+      - os_version.row[0].OS_VERSION | regex_replace('V([0-9])R([0-9])M([0-9])', '\\1.\\2') | float >= 7.3
+    fail_msg: "IBM i version {{ os_version.row[0].OS_VERSION }} non supportée. Version 7.3 ou supérieure requise."
+    success_msg: "✓ Version IBM i supportée"
+
+###############################################################################
+# Vérification des ressources matérielles
+###############################################################################
+
+- name: "Lister les ressources de communication disponibles"
+  ibmi_cl_command:
+    cmd: "WRKHDWRSC TYPE(*CMN) OUTPUT(*PRINT)"
+  register: hardware_resources
+  ignore_errors: yes
+
+- name: "Vérifier les adaptateurs réseau disponibles"
+  ibmi_sql_query:
+    sql: |
+      SELECT RESOURCE_NAME, RESOURCE_TYPE, RESOURCE_STATUS, DESCRIPTION
+      FROM QSYS2.SYSTEM_HARDWARE_RESOURCE
+      WHERE RESOURCE_TYPE = 'CMN'
+      ORDER BY RESOURCE_NAME
+  register: network_adapters
+
+- name: "Afficher les adaptateurs réseau disponibles"
+  debug:
+    msg: "{{ network_adapters.row | length }} adaptateur(s) réseau trouvé(s)"
+
+- name: "Vérifier qu'au moins un adaptateur est disponible"
+  assert:
+    that:
+      - network_adapters.row | length > 0
+    fail_msg: "Aucun adaptateur réseau trouvé"
+    success_msg: "✓ Adaptateurs réseau disponibles"
+
+###############################################################################
+# Vérification des lignes de communication existantes
+###############################################################################
+
+- name: "Vérifier si la ligne existe déjà"
+  ibmi_sql_query:
+    sql: |
+      SELECT LINE_NAME, LINE_TYPE, LINE_STATUS, RESOURCE_NAME
+      FROM QSYS2.NETSTAT_LINE_INFO
+      WHERE LINE_NAME = '{{ line_description }}'
+  register: existing_line
+
+- name: "Afficher le statut de la ligne si elle existe"
+  debug:
+    msg: "⚠ La ligne {{ line_description }} existe déjà avec le statut: {{ existing_line.row[0].LINE_STATUS }}"
+  when: existing_line.row | length > 0
+
+- name: "Avertissement si la ligne existe"
+  debug:
+    msg: "La configuration continuera et mettra à jour la ligne existante"
+  when: existing_line.row | length > 0
+
+###############################################################################
+# Vérification des interfaces TCP/IP existantes
+###############################################################################
+
+- name: "Vérifier les interfaces TCP/IP existantes"
+  ibmi_sql_query:
+    sql: |
+      SELECT INTERFACE_NAME, INTERNET_ADDRESS, INTERFACE_STATUS, LINE_DESCRIPTION
+      FROM QSYS2.NETSTAT_INTERFACE_INFO
+      WHERE INTERFACE_STATUS = 'ACTIVE'
+  register: existing_interfaces
+
+- name: "Afficher les interfaces actives"
+  debug:
+    msg: "{{ existing_interfaces.row | length }} interface(s) TCP/IP active(s)"
+
+- name: "Vérifier si l'adresse IP est déjà utilisée"
+  ibmi_sql_query:
+    sql: |
+      SELECT INTERFACE_NAME, INTERNET_ADDRESS, LINE_DESCRIPTION
+      FROM QSYS2.NETSTAT_INTERFACE_INFO
+      WHERE INTERNET_ADDRESS = '{{ ip_address }}'
+  register: ip_conflict
+
+- name: "Échec si l'adresse IP est déjà utilisée"
+  fail:
+    msg: "⚠ L'adresse IP {{ ip_address }} est déjà utilisée par l'interface {{ ip_conflict.row[0].INTERFACE_NAME }}"
+  when: 
+    - ip_conflict.row | length > 0
+    - ip_conflict.row[0].INTERFACE_NAME != interface_name
+
+###############################################################################
+# Vérification de la connectivité réseau actuelle
+###############################################################################
+
+- name: "Vérifier la configuration réseau actuelle"
+  ibmi_sql_query:
+    sql: |
+      SELECT COUNT(*) as ROUTE_COUNT
+      FROM QSYS2.NETSTAT_ROUTE_INFO
+      WHERE ROUTE_TYPE = '*DFTROUTE'
+  register: default_routes
+
+- name: "Afficher le nombre de routes par défaut"
+  debug:
+    msg: "{{ default_routes.row[0].ROUTE_COUNT }} route(s) par défaut configurée(s)"
+
+###############################################################################
+# Vérification des privilèges utilisateur
+###############################################################################
+
+- name: "Vérifier les privilèges de l'utilisateur"
+  ibmi_sql_query:
+    sql: |
+      SELECT AUTHORIZATION_NAME, 
+             CASE WHEN ALL_OBJECT_AUTHORITY = 'YES' THEN 'OUI' ELSE 'NON' END AS ALLOBJ,
+             CASE WHEN IO_SYSTEM_CONFIGURATION = 'YES' THEN 'OUI' ELSE 'NON' END AS IOSYSCFG
+      FROM QSYS2.USER_INFO
+      WHERE AUTHORIZATION_NAME = CURRENT USER
+  register: user_privileges
+
+- name: "Afficher les privilèges de l'utilisateur"
+  debug:
+    msg:
+      - "Utilisateur: {{ user_privileges.row[0].AUTHORIZATION_NAME }}"
+      - "*ALLOBJ: {{ user_privileges.row[0].ALLOBJ }}"
+      - "*IOSYSCFG: {{ user_privileges.row[0].IOSYSCFG }}"
+
+- name: "Vérifier les privilèges requis"
+  assert:
+    that:
+      - user_privileges.row[0].ALLOBJ == 'OUI'
+      - user_privileges.row[0].IOSYSCFG == 'OUI'
+    fail_msg: "L'utilisateur n'a pas les privilèges *ALLOBJ et *IOSYSCFG requis"
+    success_msg: "✓ Privilèges utilisateur suffisants"
+
+###############################################################################
+# Vérification de l'espace disque
+###############################################################################
+
+- name: "Vérifier l'espace disque disponible"
+  ibmi_sql_query:
+    sql: |
+      SELECT SYSTEM_ASP_USED, SYSTEM_ASP_STORAGE, 
+             ROUND((SYSTEM_ASP_USED * 100.0 / SYSTEM_ASP_STORAGE), 2) AS PERCENT_USED
+      FROM QSYS2.SYSTEM_STATUS_INFO
+  register: disk_space
+
+- name: "Afficher l'utilisation du disque"
+  debug:
+    msg: "Utilisation ASP système: {{ disk_space.row[0].PERCENT_USED }}%"
+
+- name: "Avertissement si l'espace disque est faible"
+  debug:
+    msg: "⚠ Attention: Espace disque faible ({{ disk_space.row[0].PERCENT_USED }}%)"
+  when: disk_space.row[0].PERCENT_USED | float > 80
+
+###############################################################################
+# Vérification des PTFs critiques
+###############################################################################
+
+- name: "Vérifier les PTFs réseau critiques"
+  ibmi_sql_query:
+    sql: |
+      SELECT COUNT(*) AS PTF_COUNT
+      FROM QSYS2.PTF_INFO
+      WHERE PTF_PRODUCT_ID = '5770SS1'
+        AND PTF_IPL_ACTION IN ('TEMPORARILY APPLIED', 'PERMANENTLY APPLIED')
+        AND PTF_PRODUCT_OPTION IN ('*BASE', '1')
+  register: network_ptfs
+
+- name: "Afficher le nombre de PTFs réseau installées"
+  debug:
+    msg: "{{ network_ptfs.row[0].PTF_COUNT }} PTF(s) réseau installée(s)"
+
+###############################################################################
+# Génération du rapport de vérification
+###############################################################################
+
+- name: "Créer le répertoire de rapports"
+  file:
+    path: "{{ backup_directory | default('/tmp/sriov_backups') }}"
+    state: directory
+    mode: '0755'
+  delegate_to: localhost
+
+- name: "Générer le rapport de vérification"
+  template:
+    src: check_report.j2
+    dest: "{{ backup_directory | default('/tmp/sriov_backups') }}/check_report_{{ ansible_date_time.date }}.txt"
+  delegate_to: localhost
+
+- name: "Banner - Fin de la vérification"
+  debug:
+    msg:
+      - "════════════════════════════════════════════════════════"
+      - "  ✓ Vérification des Prérequis Terminée"
+      - "  Tous les prérequis sont satisfaits"
+      - "════════════════════════════════════════════════════════"
+
+# Made with Bob

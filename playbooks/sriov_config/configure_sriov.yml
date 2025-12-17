@@ -1,0 +1,147 @@
+---
+###############################################################################
+# Playbook: Configuration SR-IOV pour IBM i
+# Description: Automatise la configuration SR-IOV pour améliorer les 
+#              performances réseau d'une partition IBM i
+# Auteur: Ansible for IBM i
+# Date: 2025-12-17
+###############################################################################
+
+- name: "Configuration SR-IOV pour IBM i"
+  hosts: ibmi_servers
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  tasks:
+    - name: "Afficher le banner de démarrage"
+      debug:
+        msg:
+          - "╔════════════════════════════════════════════════════════════╗"
+          - "║     Configuration SR-IOV pour IBM i                       ║"
+          - "║     Partition: {{ partition_name }}                       ║"
+          - "║     Système: {{ managed_system }}                         ║"
+          - "╚════════════════════════════════════════════════════════════╝"
+      tags: always
+
+    - name: "Vérifier la connexion à IBM i"
+      ibmi_sql_query:
+        sql: "SELECT * FROM QSYS2.SYSTEM_STATUS_INFO"
+      register: system_status
+      tags: always
+
+    - name: "Afficher les informations système"
+      debug:
+        msg:
+          - "Système: {{ system_status.row[0].HOST_NAME }}"
+          - "Version: {{ system_status.row[0].OS_VERSION }}"
+          - "Niveau: {{ system_status.row[0].OS_LEVEL }}"
+      tags: always
+
+###############################################################################
+# Phase 1: Vérification des prérequis
+###############################################################################
+
+- name: "Phase 1: Vérification des prérequis SR-IOV"
+  hosts: ibmi_servers
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  roles:
+    - role: sriov_check
+      tags: check
+
+###############################################################################
+# Phase 2: Configuration SR-IOV
+###############################################################################
+
+- name: "Phase 2: Configuration SR-IOV sur IBM i"
+  hosts: ibmi_servers
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  roles:
+    - role: sriov_configure
+      tags: configure
+
+###############################################################################
+# Phase 3: Validation de la configuration
+###############################################################################
+
+- name: "Phase 3: Validation de la configuration SR-IOV"
+  hosts: ibmi_servers
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  roles:
+    - role: sriov_validate
+      tags: validate
+
+###############################################################################
+# Phase 4: Rapport final
+###############################################################################
+
+- name: "Phase 4: Génération du rapport final"
+  hosts: ibmi_servers
+  gather_facts: yes
+  
+  vars_files:
+    - vars.yml
+  
+  tasks:
+    - name: "Afficher le résumé de la configuration"
+      debug:
+        msg:
+          - "╔════════════════════════════════════════════════════════════╗"
+          - "║     Configuration SR-IOV Terminée                         ║"
+          - "╠════════════════════════════════════════════════════════════╣"
+          - "║  Ligne: {{ line_description }}                            ║"
+          - "║  Interface: {{ interface_name }}                          ║"
+          - "║  Adresse IP: {{ ip_address }}                             ║"
+          - "║  Masque: {{ subnet_mask }}                                ║"
+          - "║  Passerelle: {{ gateway }}                                ║"
+          - "╠════════════════════════════════════════════════════════════╣"
+          - "║  Prochaines étapes:                                       ║"
+          - "║  1. Vérifier: NETSTAT *IFC                                ║"
+          - "║  2. Tester: PING RMTSYS('{{ gateway }}')                  ║"
+          - "║  3. Valider les performances réseau                       ║"
+          - "╚════════════════════════════════════════════════════════════╝"
+      tags: always
+
+    - name: "Sauvegarder le rapport de configuration"
+      copy:
+        content: |
+          Configuration SR-IOV - Rapport
+          ================================
+          Date: {{ ansible_date_time.iso8601 }}
+          Système: {{ inventory_hostname }}
+          Partition: {{ partition_name }}
+          
+          Configuration réseau:
+          - Ligne: {{ line_description }}
+          - Interface: {{ interface_name }}
+          - IP: {{ ip_address }}
+          - Masque: {{ subnet_mask }}
+          - Passerelle: {{ gateway }}
+          {% if vlan_id is defined %}
+          - VLAN: {{ vlan_id }}
+          {% endif %}
+          
+          Configuration SR-IOV:
+          - Adaptateur: {{ sriov_adapter_id }}
+          - VF Number: {{ sriov_vf_number }}
+          - Capacité: {{ sriov_capacity }}%
+          
+          Statut: Configuration terminée avec succès
+        dest: "/tmp/sriov_config_{{ ansible_date_time.date }}.txt"
+      delegate_to: localhost
+      tags: always
+
+# Made with Bob

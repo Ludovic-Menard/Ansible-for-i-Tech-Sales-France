@@ -1,0 +1,183 @@
+═══════════════════════════════════════════════════════════════════════════
+  RAPPORT DE VÉRIFICATION SR-IOV - IBM i
+═══════════════════════════════════════════════════════════════════════════
+
+Date du rapport: {{ ansible_date_time.iso8601 }}
+Système: {{ inventory_hostname }}
+Partition: {{ partition_name }}
+
+═══════════════════════════════════════════════════════════════════════════
+  INFORMATIONS SYSTÈME
+═══════════════════════════════════════════════════════════════════════════
+
+Version IBM i: {{ os_version.row[0].OS_VERSION }} {{ os_version.row[0].OS_LEVEL }}
+Nom d'hôte: {{ ansible_hostname | default('N/A') }}
+Utilisateur: {{ user_privileges.row[0].AUTHORIZATION_NAME }}
+
+═══════════════════════════════════════════════════════════════════════════
+  PRIVILÈGES UTILISATEUR
+═══════════════════════════════════════════════════════════════════════════
+
+*ALLOBJ: {{ user_privileges.row[0].ALLOBJ }}
+*IOSYSCFG: {{ user_privileges.row[0].IOSYSCFG }}
+
+Statut: {% if user_privileges.row[0].ALLOBJ == 'OUI' and user_privileges.row[0].IOSYSCFG == 'OUI' %}✓ OK{% else %}✗ INSUFFISANT{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  RESSOURCES MATÉRIELLES
+═══════════════════════════════════════════════════════════════════════════
+
+Adaptateurs réseau disponibles: {{ network_adapters.row | length }}
+
+{% for adapter in network_adapters.row %}
+  - {{ adapter.RESOURCE_NAME }}: {{ adapter.DESCRIPTION }} ({{ adapter.RESOURCE_STATUS }})
+{% endfor %}
+
+═══════════════════════════════════════════════════════════════════════════
+  CONFIGURATION RÉSEAU ACTUELLE
+═══════════════════════════════════════════════════════════════════════════
+
+Interfaces TCP/IP actives: {{ existing_interfaces.row | length }}
+
+{% for interface in existing_interfaces.row %}
+  - {{ interface.INTERFACE_NAME }}: {{ interface.INTERNET_ADDRESS }} ({{ interface.LINE_DESCRIPTION }})
+{% endfor %}
+
+Routes par défaut: {{ default_routes.row[0].ROUTE_COUNT }}
+
+═══════════════════════════════════════════════════════════════════════════
+  LIGNE DE COMMUNICATION
+═══════════════════════════════════════════════════════════════════════════
+
+Ligne cible: {{ line_description }}
+{% if existing_line.row | length > 0 %}
+Statut: ⚠ EXISTE DÉJÀ
+  - Type: {{ existing_line.row[0].LINE_TYPE }}
+  - Statut: {{ existing_line.row[0].LINE_STATUS }}
+  - Ressource: {{ existing_line.row[0].RESOURCE_NAME }}
+{% else %}
+Statut: ✓ DISPONIBLE (nouvelle ligne)
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  ADRESSE IP
+═══════════════════════════════════════════════════════════════════════════
+
+Adresse IP cible: {{ ip_address }}
+{% if ip_conflict.row | length > 0 %}
+Statut: ✗ CONFLIT - Déjà utilisée par {{ ip_conflict.row[0].INTERFACE_NAME }}
+{% else %}
+Statut: ✓ DISPONIBLE
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  ESPACE DISQUE
+═══════════════════════════════════════════════════════════════════════════
+
+Utilisation ASP système: {{ disk_space.row[0].PERCENT_USED }}%
+Utilisé: {{ disk_space.row[0].SYSTEM_ASP_USED }} MB
+Total: {{ disk_space.row[0].SYSTEM_ASP_STORAGE }} MB
+
+Statut: {% if disk_space.row[0].PERCENT_USED | float < 80 %}✓ OK{% elif disk_space.row[0].PERCENT_USED | float < 90 %}⚠ ATTENTION{% else %}✗ CRITIQUE{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  PTFs RÉSEAU
+═══════════════════════════════════════════════════════════════════════════
+
+PTFs réseau installées: {{ network_ptfs.row[0].PTF_COUNT }}
+
+═══════════════════════════════════════════════════════════════════════════
+  CONFIGURATION SR-IOV PLANIFIÉE
+═══════════════════════════════════════════════════════════════════════════
+
+Adaptateur SR-IOV: {{ sriov_adapter_id }}
+Virtual Function: {{ sriov_vf_number }}
+Capacité allouée: {{ sriov_capacity }}%
+
+Ligne: {{ line_description }}
+Interface: {{ interface_name }}
+Adresse IP: {{ ip_address }}
+Masque: {{ subnet_mask }}
+Passerelle: {{ gateway }}
+{% if vlan_id is defined %}
+VLAN: {{ vlan_id }}
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  RÉSUMÉ
+═══════════════════════════════════════════════════════════════════════════
+
+{% set checks_passed = [] %}
+{% set checks_failed = [] %}
+
+{% if os_version.row[0].OS_VERSION | regex_replace('V([0-9])R([0-9])M([0-9])', '\\1.\\2') | float >= 7.3 %}
+  {% set _ = checks_passed.append('Version IBM i') %}
+{% else %}
+  {% set _ = checks_failed.append('Version IBM i') %}
+{% endif %}
+
+{% if user_privileges.row[0].ALLOBJ == 'OUI' and user_privileges.row[0].IOSYSCFG == 'OUI' %}
+  {% set _ = checks_passed.append('Privilèges utilisateur') %}
+{% else %}
+  {% set _ = checks_failed.append('Privilèges utilisateur') %}
+{% endif %}
+
+{% if network_adapters.row | length > 0 %}
+  {% set _ = checks_passed.append('Adaptateurs réseau') %}
+{% else %}
+  {% set _ = checks_failed.append('Adaptateurs réseau') %}
+{% endif %}
+
+{% if ip_conflict.row | length == 0 %}
+  {% set _ = checks_passed.append('Adresse IP disponible') %}
+{% else %}
+  {% set _ = checks_failed.append('Conflit adresse IP') %}
+{% endif %}
+
+{% if disk_space.row[0].PERCENT_USED | float < 90 %}
+  {% set _ = checks_passed.append('Espace disque') %}
+{% else %}
+  {% set _ = checks_failed.append('Espace disque critique') %}
+{% endif %}
+
+Vérifications réussies: {{ checks_passed | length }}
+Vérifications échouées: {{ checks_failed | length }}
+
+{% if checks_passed | length > 0 %}
+✓ Vérifications réussies:
+{% for check in checks_passed %}
+  - {{ check }}
+{% endfor %}
+{% endif %}
+
+{% if checks_failed | length > 0 %}
+✗ Vérifications échouées:
+{% for check in checks_failed %}
+  - {{ check }}
+{% endfor %}
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  RECOMMANDATIONS
+═══════════════════════════════════════════════════════════════════════════
+
+{% if checks_failed | length == 0 %}
+✓ Tous les prérequis sont satisfaits.
+  La configuration SR-IOV peut être effectuée en toute sécurité.
+{% else %}
+⚠ Des problèmes ont été détectés.
+  Veuillez corriger les problèmes avant de continuer.
+{% endif %}
+
+{% if disk_space.row[0].PERCENT_USED | float > 80 %}
+⚠ Espace disque: Envisager un nettoyage ou une extension de l'ASP.
+{% endif %}
+
+{% if existing_line.row | length > 0 %}
+⚠ La ligne {{ line_description }} existe déjà.
+  Elle sera mise à jour avec la nouvelle configuration.
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  FIN DU RAPPORT
+═══════════════════════════════════════════════════════════════════════════

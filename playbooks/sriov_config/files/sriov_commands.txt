@@ -1,0 +1,336 @@
+###############################################################################
+# Référence des Commandes SR-IOV pour IBM i
+# Description: Commandes utiles pour la gestion SR-IOV
+###############################################################################
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES IBM i - GESTION DES LIGNES
+═══════════════════════════════════════════════════════════════════════════
+
+# Lister toutes les ressources de communication
+WRKHDWRSC TYPE(*CMN)
+
+# Afficher les détails d'une ressource spécifique
+DSPHWRSC TYPE(*CMN) RSRCNAME(CMNxx)
+
+# Créer une ligne Ethernet SR-IOV
+CRTLINETH LIND(ETHLINE01) RSRCNAME(CMNxx) LINESPEED(10G) DUPLEX(*FULL) AUTOSTART(*YES)
+
+# Afficher les détails d'une ligne
+DSPLINETH LIND(ETHLINE01)
+
+# Modifier une ligne Ethernet
+CHGLINETH LIND(ETHLINE01) MAXFRAME(8996) VLANID(100)
+
+# Démarrer une ligne
+VRYCFG CFGOBJ(ETHLINE01) CFGTYPE(*LIN) STATUS(*ON)
+
+# Arrêter une ligne
+VRYCFG CFGOBJ(ETHLINE01) CFGTYPE(*LIN) STATUS(*OFF)
+
+# Supprimer une ligne
+DLTLINETH LIND(ETHLINE01)
+
+# Vérifier le statut des lignes
+WRKCFGSTS *LIN
+WRKCFGSTS CFGTYPE(*LIN) CFGD(ETHLINE01)
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES IBM i - CONFIGURATION TCP/IP
+═══════════════════════════════════════════════════════════════════════════
+
+# Ajouter une interface TCP/IP
+ADDTCPIFC INTNETADR('192.168.100.50') LIND(ETHLINE01) SUBNETMASK('255.255.255.0')
+
+# Démarrer une interface TCP/IP
+STRTCPIFC INTNETADR('192.168.100.50')
+
+# Arrêter une interface TCP/IP
+ENDTCPIFC INTNETADR('192.168.100.50')
+
+# Supprimer une interface TCP/IP
+RMVTCPIFC INTNETADR('192.168.100.50')
+
+# Modifier une interface TCP/IP
+CHGTCPIFC INTNETADR('192.168.100.50') AUTOSTART(*YES)
+
+# Afficher les interfaces TCP/IP
+NETSTAT *IFC
+
+# Afficher les détails d'une interface
+NETSTAT OPTION(*IFC) INTNETADR('192.168.100.50')
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES IBM i - ROUTAGE
+═══════════════════════════════════════════════════════════════════════════
+
+# Ajouter une route par défaut
+ADDTCPRTE RTEDEST(*DFTROUTE) NEXTHOP('192.168.100.1')
+
+# Modifier une route par défaut
+CHGTCPRTE RTEDEST(*DFTROUTE) NEXTHOP('192.168.100.1')
+
+# Supprimer une route
+RMVTCPRTE RTEDEST(*DFTROUTE)
+
+# Afficher les routes
+NETSTAT *RTE
+
+# Afficher une route spécifique
+NETSTAT OPTION(*RTE) RTEDEST(*DFTROUTE)
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES IBM i - TESTS DE CONNECTIVITÉ
+═══════════════════════════════════════════════════════════════════════════
+
+# Ping simple
+PING RMTSYS('192.168.100.1')
+
+# Ping avec nombre de paquets
+PING RMTSYS('192.168.100.1') NBRPKT(100)
+
+# Ping avec taille de paquet personnalisée
+PING RMTSYS('192.168.100.1') PKTSIZE(1500)
+
+# Ping avec timeout
+PING RMTSYS('192.168.100.1') WAITTIME(5)
+
+# Traceroute
+TRACEROUTE RMTSYS('192.168.100.1')
+
+# Test de port TCP
+TELNET RMTSYS('192.168.100.10') PORT(80)
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES IBM i - STATISTIQUES ET MONITORING
+═══════════════════════════════════════════════════════════════════════════
+
+# Afficher les statistiques TCP/IP
+WRKTCPSTS
+
+# Statistiques des interfaces
+WRKTCPSTS *IFC
+
+# Statistiques des connexions
+WRKTCPSTS *CNN
+
+# Statistiques des routes
+WRKTCPSTS *RTE
+
+# Afficher les connexions actives
+NETSTAT *CNN
+
+# Afficher les serveurs en écoute
+NETSTAT *CNN STATE(*LISTEN)
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES IBM i - DNS
+═══════════════════════════════════════════════════════════════════════════
+
+# Configurer le domaine TCP/IP
+CHGTCPDMN INTNETADR('192.168.100.10') DMNNAME('example.com')
+
+# Ajouter un serveur DNS
+ADDTCPDNS INTNETADR('192.168.100.10')
+
+# Supprimer un serveur DNS
+RMVTCPDNS INTNETADR('192.168.100.10')
+
+# Afficher la configuration DNS
+CFGTCP -> Option 12 (Change TCP/IP domain information)
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES IBM i - LOGS ET DIAGNOSTIC
+═══════════════════════════════════════════════════════════════════════════
+
+# Afficher l'historique système
+DSPLOG QHST
+
+# Afficher les messages d'un job
+DSPJOBLOG
+
+# Afficher les logs TCP/IP
+DSPLOG LOG(QHST) MSGID(TCP*)
+
+# Afficher les logs de communication
+DSPLOG LOG(QHST) MSGID(CPF*)
+
+# Tracer les communications réseau
+TRCCNN TYPE(*LINE) LINE(ETHLINE01)
+
+# Arrêter le traçage
+ENDTRCCNN
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES HMC - GESTION SR-IOV
+═══════════════════════════════════════════════════════════════════════════
+
+# Lister les adaptateurs SR-IOV disponibles
+lshwres -r sriov --rsubtype adapter -m <managed_system>
+
+# Afficher les détails d'un adaptateur SR-IOV
+lshwres -r sriov --rsubtype adapter -m <managed_system> --filter "adapter_id=<adapter_id>"
+
+# Lister les Virtual Functions (VF)
+lshwres -r sriov --rsubtype logport -m <managed_system>
+
+# Créer une Virtual Function
+chhwres -r sriov -m <managed_system> -o a \
+  --id <adapter_id> --logport <vf_number> \
+  -a "adapter_id=<adapter_id>,logical_port_type=eth"
+
+# Assigner une VF à une partition
+chhwres -r sriov -m <managed_system> -o a \
+  -p <partition_name> \
+  --id <adapter_id> --logport <vf_number>
+
+# Retirer une VF d'une partition
+chhwres -r sriov -m <managed_system> -o r \
+  -p <partition_name> \
+  --id <adapter_id> --logport <vf_number>
+
+# Modifier la capacité d'une VF
+chhwres -r sriov -m <managed_system> -o s \
+  -p <partition_name> \
+  --id <adapter_id> --logport <vf_number> \
+  -a "capacity=10"
+
+# Lister les VF assignées à une partition
+lshwres -r sriov -m <managed_system> -p <partition_name>
+
+# Afficher les statistiques SR-IOV
+lshwres -r sriov --rsubtype logport -m <managed_system> \
+  --filter "adapter_id=<adapter_id>" --level lpar
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES HMC - GESTION DES PARTITIONS
+═══════════════════════════════════════════════════════════════════════════
+
+# Lister les partitions
+lssyscfg -r lpar -m <managed_system>
+
+# Afficher les détails d'une partition
+lssyscfg -r lpar -m <managed_system> --filter "lpar_names=<partition_name>"
+
+# Arrêter une partition
+chsysstate -r lpar -m <managed_system> -o shutdown -n <partition_name>
+
+# Démarrer une partition
+chsysstate -r lpar -m <managed_system> -o on -n <partition_name>
+
+# Redémarrer une partition
+chsysstate -r lpar -m <managed_system> -o shutdown -n <partition_name> --restart
+
+═══════════════════════════════════════════════════════════════════════════
+  REQUÊTES SQL - INFORMATIONS SYSTÈME
+═══════════════════════════════════════════════════════════════════════════
+
+-- Informations système
+SELECT * FROM QSYS2.SYSTEM_STATUS_INFO;
+
+-- Ressources matérielles
+SELECT * FROM QSYS2.SYSTEM_HARDWARE_RESOURCE WHERE RESOURCE_TYPE = 'CMN';
+
+-- Informations sur les lignes
+SELECT * FROM QSYS2.NETSTAT_LINE_INFO;
+
+-- Informations sur les interfaces TCP/IP
+SELECT * FROM QSYS2.NETSTAT_INTERFACE_INFO;
+
+-- Informations sur les routes
+SELECT * FROM QSYS2.NETSTAT_ROUTE_INFO;
+
+-- Connexions actives
+SELECT * FROM QSYS2.NETSTAT_CONNECTION_INFO;
+
+-- Statistiques réseau
+SELECT INTERFACE_NAME, BYTES_SENT, BYTES_RECEIVED, 
+       PACKETS_SENT, PACKETS_RECEIVED,
+       OUTPUT_ERRORS, INPUT_ERRORS
+FROM QSYS2.NETSTAT_INTERFACE_INFO
+WHERE INTERFACE_STATUS = 'ACTIVE';
+
+-- Privilèges utilisateur
+SELECT AUTHORIZATION_NAME, 
+       ALL_OBJECT_AUTHORITY, 
+       IO_SYSTEM_CONFIGURATION
+FROM QSYS2.USER_INFO
+WHERE AUTHORIZATION_NAME = CURRENT USER;
+
+-- PTFs installées
+SELECT PTF_PRODUCT_ID, PTF_IDENTIFIER, PTF_IPL_ACTION
+FROM QSYS2.PTF_INFO
+WHERE PTF_PRODUCT_ID = '5770SS1'
+ORDER BY PTF_LOADED_DATE DESC;
+
+═══════════════════════════════════════════════════════════════════════════
+  EXEMPLES DE CONFIGURATION COMPLÈTE
+═══════════════════════════════════════════════════════════════════════════
+
+# Configuration SR-IOV complète (IBM i)
+# 1. Créer la ligne
+CRTLINETH LIND(ETHLINE01) RSRCNAME(CMN05) LINESPEED(10G) DUPLEX(*FULL) AUTOSTART(*YES)
+
+# 2. Démarrer la ligne
+VRYCFG CFGOBJ(ETHLINE01) CFGTYPE(*LIN) STATUS(*ON)
+
+# 3. Ajouter l'interface TCP/IP
+ADDTCPIFC INTNETADR('192.168.100.50') LIND(ETHLINE01) SUBNETMASK('255.255.255.0')
+
+# 4. Démarrer l'interface
+STRTCPIFC INTNETADR('192.168.100.50')
+
+# 5. Ajouter la route par défaut
+ADDTCPRTE RTEDEST(*DFTROUTE) NEXTHOP('192.168.100.1')
+
+# 6. Tester la connectivité
+PING RMTSYS('192.168.100.1') NBRPKT(10)
+
+═══════════════════════════════════════════════════════════════════════════
+  DÉPANNAGE - COMMANDES UTILES
+═══════════════════════════════════════════════════════════════════════════
+
+# Vérifier si la ligne est active
+WRKCFGSTS *LIN
+
+# Vérifier les erreurs de ligne
+DSPLOG LOG(QHST) MSGID(CPF*)
+
+# Réinitialiser une ligne
+VRYCFG CFGOBJ(ETHLINE01) CFGTYPE(*LIN) STATUS(*OFF)
+DLYJOB DLY(5)
+VRYCFG CFGOBJ(ETHLINE01) CFGTYPE(*LIN) STATUS(*ON)
+
+# Vérifier la configuration TCP/IP
+NETSTAT *IFC
+NETSTAT *RTE
+
+# Tester la résolution DNS
+PING RMTSYS('www.ibm.com')
+
+# Afficher les erreurs réseau
+SELECT * FROM QSYS2.NETSTAT_INTERFACE_INFO 
+WHERE OUTPUT_ERRORS > 0 OR INPUT_ERRORS > 0;
+
+# Vérifier les connexions en erreur
+WRKTCPSTS *CNN
+
+═══════════════════════════════════════════════════════════════════════════
+  PERFORMANCE - OPTIMISATION
+═══════════════════════════════════════════════════════════════════════════
+
+# Activer les jumbo frames (MTU 9000)
+CHGLINETH LIND(ETHLINE01) MAXFRAME(8996)
+
+# Configurer la priorité VLAN
+CHGLINETH LIND(ETHLINE01) VLANID(100) VLANPRIORITY(5)
+
+# Ajuster les paramètres TCP/IP
+CHGTCPA TCPKEEPALV(60) TCPKEEPCNT(5)
+
+# Afficher les statistiques de performance
+WRKTCPSTS *IFC
+
+═══════════════════════════════════════════════════════════════════════════
+  FIN DU FICHIER DE RÉFÉRENCE
+═══════════════════════════════════════════════════════════════════════════

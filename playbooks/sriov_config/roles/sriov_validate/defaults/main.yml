@@ -1,0 +1,21 @@
+---
+###############################################################################
+# Valeurs par défaut pour le rôle sriov_validate
+###############################################################################
+
+# Répertoire de sauvegarde
+backup_directory: "/tmp/sriov_backups"
+
+# Tests de validation par défaut
+validation_tests:
+  ping_gateway: true
+  ping_external: true
+  external_host: "8.8.8.8"
+  dns_resolution: false
+  test_hostname: "www.ibm.com"
+  bandwidth_test: false
+  latency_test: false
+  ping_count: 10
+  test_timeout: 30
+
+# Made with Bob

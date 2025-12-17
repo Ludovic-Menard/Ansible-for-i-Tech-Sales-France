@@ -1,0 +1,273 @@
+═══════════════════════════════════════════════════════════════════════════
+  RAPPORT DE VALIDATION SR-IOV - IBM i
+═══════════════════════════════════════════════════════════════════════════
+
+Date du rapport: {{ ansible_date_time.iso8601 }}
+Système: {{ inventory_hostname }}
+Partition: {{ partition_name }}
+
+═══════════════════════════════════════════════════════════════════════════
+  VALIDATION DE LA LIGNE DE COMMUNICATION
+═══════════════════════════════════════════════════════════════════════════
+
+{% if line_validation.row | length > 0 %}
+Nom de la ligne: {{ line_validation.row[0].LINE_NAME }}
+Type: {{ line_validation.row[0].LINE_TYPE }}
+Statut: {{ line_validation.row[0].LINE_STATUS }}
+Ressource: {{ line_validation.row[0].RESOURCE_NAME }}
+Vitesse: {{ line_validation.row[0].LINE_SPEED }}
+Mode duplex: {{ line_validation.row[0].DUPLEX_MODE }}
+Démarrage auto: {{ line_validation.row[0].AUTO_START }}
+
+Résultat: {% if line_validation.row[0].LINE_STATUS == 'ACTIVE' %}✓ RÉUSSI{% else %}✗ ÉCHEC{% endif %}
+{% else %}
+Résultat: ✗ LIGNE NON TROUVÉE
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  VALIDATION DE L'INTERFACE TCP/IP
+═══════════════════════════════════════════════════════════════════════════
+
+{% if interface_validation.row | length > 0 %}
+Nom de l'interface: {{ interface_validation.row[0].INTERFACE_NAME }}
+Adresse IP: {{ interface_validation.row[0].INTERNET_ADDRESS }}
+Statut: {{ interface_validation.row[0].INTERFACE_STATUS }}
+Ligne associée: {{ interface_validation.row[0].LINE_DESCRIPTION }}
+Masque de sous-réseau: {{ interface_validation.row[0].SUBNET_MASK }}
+Adresse réseau: {{ interface_validation.row[0].NETWORK_ADDRESS }}
+MTU: {{ interface_validation.row[0].MAXIMUM_TRANSMISSION_UNIT }}
+
+Résultat: {% if interface_validation.row[0].INTERFACE_STATUS == 'ACTIVE' %}✓ RÉUSSI{% else %}✗ ÉCHEC{% endif %}
+{% else %}
+Résultat: ✗ INTERFACE NON TROUVÉE
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  VALIDATION DE LA ROUTE PAR DÉFAUT
+═══════════════════════════════════════════════════════════════════════════
+
+{% if route_validation.row | length > 0 %}
+Destination: {{ route_validation.row[0].ROUTE_DESTINATION }}
+Passerelle: {{ route_validation.row[0].NEXT_HOP }}
+Type: {{ route_validation.row[0].ROUTE_TYPE }}
+Statut: {{ route_validation.row[0].ROUTE_STATUS }}
+
+Résultat: ✓ RÉUSSI
+{% else %}
+Résultat: ✗ AUCUNE ROUTE PAR DÉFAUT
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  TESTS DE CONNECTIVITÉ
+═══════════════════════════════════════════════════════════════════════════
+
+{% if validation_tests.ping_gateway | default(true) %}
+Test ping vers la passerelle ({{ gateway }}):
+{% if ping_gateway is defined %}
+  Résultat: {% if ping_gateway is succeeded %}✓ RÉUSSI{% else %}✗ ÉCHEC{% endif %}
+{% else %}
+  Résultat: - NON EFFECTUÉ
+{% endif %}
+{% endif %}
+
+{% if validation_tests.ping_external | default(true) %}
+Test ping vers hôte externe ({{ validation_tests.external_host | default('8.8.8.8') }}):
+{% if ping_external is defined %}
+  Résultat: {% if ping_external is succeeded %}✓ RÉUSSI{% else %}⚠ ÉCHEC (vérifier le routage){% endif %}
+{% else %}
+  Résultat: - NON EFFECTUÉ
+{% endif %}
+{% endif %}
+
+{% if validation_tests.dns_resolution | default(false) %}
+Test de résolution DNS ({{ validation_tests.test_hostname | default('www.ibm.com') }}):
+{% if dns_test is defined %}
+  Résultat: {% if dns_test is succeeded %}✓ RÉUSSI{% else %}⚠ ÉCHEC{% endif %}
+{% else %}
+  Résultat: - NON EFFECTUÉ
+{% endif %}
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  STATISTIQUES RÉSEAU
+═══════════════════════════════════════════════════════════════════════════
+
+{% if interface_stats.row | length > 0 %}
+Interface: {{ interface_stats.row[0].INTERFACE_NAME }}
+
+Trafic:
+  Octets envoyés: {{ interface_stats.row[0].BYTES_SENT }}
+  Octets reçus: {{ interface_stats.row[0].BYTES_RECEIVED }}
+  Paquets envoyés: {{ interface_stats.row[0].PACKETS_SENT }}
+  Paquets reçus: {{ interface_stats.row[0].PACKETS_RECEIVED }}
+
+Erreurs:
+  Erreurs en sortie: {{ interface_stats.row[0].OUTPUT_ERRORS }}
+  Erreurs en entrée: {{ interface_stats.row[0].INPUT_ERRORS }}
+
+Résultat: {% if interface_stats.row[0].OUTPUT_ERRORS == 0 and interface_stats.row[0].INPUT_ERRORS == 0 %}✓ AUCUNE ERREUR{% else %}⚠ ERREURS DÉTECTÉES{% endif %}
+{% else %}
+Résultat: ✗ STATISTIQUES NON DISPONIBLES
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  VALIDATION MATÉRIELLE
+═══════════════════════════════════════════════════════════════════════════
+
+{% if hardware_validation is defined and hardware_validation.row | length > 0 %}
+Ressource: {{ hardware_validation.row[0].RESOURCE_NAME }}
+Type: {{ hardware_validation.row[0].RESOURCE_TYPE }}
+Statut: {{ hardware_validation.row[0].RESOURCE_STATUS }}
+Description: {{ hardware_validation.row[0].DESCRIPTION }}
+
+Résultat: ✓ MATÉRIEL VALIDÉ
+{% else %}
+Résultat: - NON VÉRIFIÉ
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  RÉSUMÉ DE LA VALIDATION
+═══════════════════════════════════════════════════════════════════════════
+
+Score de validation: {{ validation_score }}%
+
+Critères validés:
+{% if line_validation.row | length > 0 and line_validation.row[0].LINE_STATUS == 'ACTIVE' %}
+  ✓ Ligne de communication active
+{% else %}
+  ✗ Ligne de communication non active
+{% endif %}
+
+{% if interface_validation.row | length > 0 and interface_validation.row[0].INTERFACE_STATUS == 'ACTIVE' %}
+  ✓ Interface TCP/IP active
+{% else %}
+  ✗ Interface TCP/IP non active
+{% endif %}
+
+{% if route_validation.row | length > 0 %}
+  ✓ Route par défaut configurée
+{% else %}
+  ✗ Route par défaut manquante
+{% endif %}
+
+{% if ping_gateway is defined and ping_gateway is succeeded %}
+  ✓ Connectivité vers la passerelle
+{% elif ping_gateway is defined %}
+  ✗ Pas de connectivité vers la passerelle
+{% else %}
+  - Test de connectivité non effectué
+{% endif %}
+
+{% if interface_stats.row | length > 0 and interface_stats.row[0].OUTPUT_ERRORS == 0 and interface_stats.row[0].INPUT_ERRORS == 0 %}
+  ✓ Aucune erreur réseau
+{% elif interface_stats.row | length > 0 %}
+  ⚠ Erreurs réseau détectées
+{% else %}
+  - Statistiques non disponibles
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  ÉVALUATION GLOBALE
+═══════════════════════════════════════════════════════════════════════════
+
+{% if validation_score | int == 100 %}
+✓✓✓ EXCELLENT - Configuration SR-IOV parfaite !
+
+La configuration SR-IOV est entièrement fonctionnelle et optimale.
+Tous les tests ont réussi sans erreur.
+
+{% elif validation_score | int >= 80 %}
+✓✓ BON - Configuration SR-IOV fonctionnelle
+
+La configuration SR-IOV est opérationnelle.
+Quelques tests mineurs ont échoué mais la connectivité de base fonctionne.
+
+{% elif validation_score | int >= 60 %}
+✓ ACCEPTABLE - Configuration SR-IOV partielle
+
+La configuration SR-IOV est partiellement fonctionnelle.
+Des améliorations sont recommandées.
+
+{% else %}
+✗ INSUFFISANT - Configuration SR-IOV incomplète
+
+La configuration SR-IOV présente des problèmes importants.
+Une intervention est nécessaire.
+
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  RECOMMANDATIONS
+═══════════════════════════════════════════════════════════════════════════
+
+{% if validation_score | int == 100 %}
+✓ Aucune action requise.
+  La configuration est optimale.
+
+Prochaines étapes suggérées:
+  1. Effectuer des tests de performance (débit, latence)
+  2. Configurer la surveillance réseau
+  3. Documenter la configuration
+  4. Planifier les tests de basculement
+
+{% elif validation_score | int >= 80 %}
+Recommandations:
+{% if ping_external is defined and ping_external is failed %}
+  - Vérifier la configuration du routage externe
+  - Vérifier les règles de pare-feu
+{% endif %}
+{% if dns_test is defined and dns_test is failed %}
+  - Vérifier la configuration DNS
+{% endif %}
+  - Effectuer des tests de performance complémentaires
+  - Surveiller les statistiques réseau pendant 24-48h
+
+{% else %}
+Actions requises:
+{% if line_validation.row | length == 0 or line_validation.row[0].LINE_STATUS != 'ACTIVE' %}
+  ✗ Vérifier et corriger la configuration de la ligne
+{% endif %}
+{% if interface_validation.row | length == 0 or interface_validation.row[0].INTERFACE_STATUS != 'ACTIVE' %}
+  ✗ Vérifier et corriger la configuration de l'interface TCP/IP
+{% endif %}
+{% if route_validation.row | length == 0 %}
+  ✗ Configurer la route par défaut
+{% endif %}
+{% if ping_gateway is defined and ping_gateway is failed %}
+  ✗ Résoudre les problèmes de connectivité réseau
+{% endif %}
+{% if interface_stats.row | length > 0 and (interface_stats.row[0].OUTPUT_ERRORS > 0 or interface_stats.row[0].INPUT_ERRORS > 0) %}
+  ✗ Investiguer les erreurs réseau
+{% endif %}
+
+  - Consulter les logs système: DSPLOG QHST
+  - Vérifier la configuration HMC
+  - Contacter le support si nécessaire
+
+{% endif %}
+
+═══════════════════════════════════════════════════════════════════════════
+  COMMANDES DE VÉRIFICATION UTILES
+═══════════════════════════════════════════════════════════════════════════
+
+Vérifier le statut de la ligne:
+  WRKCFGSTS *LIN
+
+Vérifier les interfaces TCP/IP:
+  NETSTAT *IFC
+
+Vérifier les routes:
+  NETSTAT *RTE
+
+Vérifier les statistiques:
+  WRKTCPSTS *IFC
+
+Tester la connectivité:
+  PING RMTSYS('{{ gateway }}')
+
+Afficher les logs:
+  DSPLOG QHST
+
+═══════════════════════════════════════════════════════════════════════════
+  FIN DU RAPPORT DE VALIDATION
+═══════════════════════════════════════════════════════════════════════════
