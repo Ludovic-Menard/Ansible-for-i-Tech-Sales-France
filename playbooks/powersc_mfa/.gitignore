@@ -1,0 +1,65 @@
+# ============================================================================
+# .gitignore pour PowerSC MFA
+# ============================================================================
+
+# Rapports générés
+reports/
+*.html
+*.pdf
+
+# Secrets et données sensibles
+vault.yml
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+qr_codes/
+backup_codes/
+
+# Logs
+*.log
+logs/
+
+# Fichiers temporaires
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Sauvegardes
+*.bak
+*.backup
+backup/
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environnements virtuels
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Ansible
+*.retry
+.ansible/
+
+# Données de test
+test_data/
+*.test
+
+# Fichiers de configuration locaux
+local_*.yml
+local_*.ini
+*_local.*

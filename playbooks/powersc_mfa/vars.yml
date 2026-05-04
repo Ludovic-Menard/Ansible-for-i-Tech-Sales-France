@@ -1,0 +1,425 @@
+---
+# ============================================================================
+# Configuration PowerSC MFA pour IBM i
+# ============================================================================
+# Ce fichier contient toutes les variables de configuration pour le déploiement
+# de PowerSC Multi-Factor Authentication avec TOTP sur IBM i
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Configuration du serveur MFA
+# ----------------------------------------------------------------------------
+powersc_mfa:
+  # Activer ou désactiver MFA
+  enabled: true
+  
+  # Configuration TOTP
+  totp:
+    # Algorithme de hachage : SHA1, SHA256, SHA512
+    # Recommandé : SHA256 (bon équilibre sécurité/compatibilité)
+    algorithm: "SHA256"
+    
+    # Période de validité du code en secondes
+    # Standard : 30 secondes
+    period: 30
+    
+    # Nombre de digits du code TOTP
+    # 6 : Standard, facile à saisir
+    # 8 : Plus sécurisé, plus difficile à saisir
+    digits: 6
+    
+    # Fenêtre de tolérance (nombre de périodes avant/après)
+    # 1 : Tolère ±30 secondes de décalage d'horloge
+    # 2 : Tolère ±60 secondes (moins sécurisé)
+    tolerance_window: 1
+  
+  # Période de grâce après l'enregistrement (secondes)
+  # Permet à l'utilisateur de tester sans bloquer l'accès
+  grace_period: 300
+  
+  # Nom de l'émetteur (affiché dans l'app TOTP)
+  issuer: "IBMi-Production"
+  
+  # Préfixe pour les comptes dans l'app TOTP
+  # Format final : "IBMi-Production:USERNAME"
+  account_prefix: "IBMi"
+
+# ----------------------------------------------------------------------------
+# Utilisateurs à enregistrer pour MFA
+# ----------------------------------------------------------------------------
+mfa_users:
+  # Administrateurs système
+  - username: "ADMIN1"
+    email: "admin1@example.com"
+    description: "Administrateur système principal"
+    phone: "+33612345678"
+    department: "IT"
+    priority: "high"
+  
+  - username: "ADMIN2"
+    email: "admin2@example.com"
+    description: "Administrateur système backup"
+    phone: "+33687654321"
+    department: "IT"
+    priority: "high"
+  
+  # Développeurs
+  - username: "DEV1"
+    email: "dev1@example.com"
+    description: "Développeur senior"
+    phone: "+33698765432"
+    department: "Development"
+    priority: "medium"
+  
+  - username: "DEV2"
+    email: "dev2@example.com"
+    description: "Développeur junior"
+    phone: "+33687654322"
+    department: "Development"
+    priority: "medium"
+  
+  # Opérateurs
+  - username: "OPS1"
+    email: "ops1@example.com"
+    description: "Opérateur système"
+    phone: "+33698765433"
+    department: "Operations"
+    priority: "low"
+
+# ----------------------------------------------------------------------------
+# Politiques de sécurité MFA
+# ----------------------------------------------------------------------------
+security_policies:
+  # Services nécessitant MFA
+  services:
+    # SSH (Secure Shell)
+    ssh:
+      require_mfa: true
+      allow_password_only: false
+      
+    # 5250 (Terminal émulation)
+    tn5250:
+      require_mfa: true
+      allow_password_only: false
+      
+    # FTP (File Transfer Protocol)
+    ftp:
+      require_mfa: false
+      allow_password_only: true
+      
+    # ODBC (Database access)
+    odbc:
+      require_mfa: false
+      allow_password_only: true
+      
+    # DDM (Distributed Data Management)
+    ddm:
+      require_mfa: false
+      allow_password_only: true
+  
+  # Codes de secours (backup codes)
+  backup_codes:
+    # Nombre de codes générés par utilisateur
+    count: 10
+    
+    # Longueur de chaque code
+    length: 8
+    
+    # Format : ALPHANUMERIC, NUMERIC, ALPHA
+    format: "ALPHANUMERIC"
+    
+    # Régénération automatique après utilisation
+    auto_regenerate: false
+  
+  # Gestion des échecs d'authentification
+  failed_attempts:
+    # Nombre maximum de tentatives échouées avant verrouillage
+    max_attempts: 3
+    
+    # Durée du verrouillage en secondes (900 = 15 minutes)
+    lockout_duration: 900
+    
+    # Réinitialisation automatique du compteur après succès
+    reset_on_success: true
+    
+    # Notification à l'administrateur après X échecs
+    notify_after: 3
+  
+  # Groupes et utilisateurs exemptés de MFA
+  # ATTENTION : Utiliser avec précaution !
+  exemptions:
+    # Groupes exemptés
+    groups: []
+    # Exemple : ["QSECOFR"]
+    
+    # Utilisateurs exemptés
+    users: []
+    # Exemple : ["EMERGENCY"]
+    
+    # Adresses IP exemptées (pour accès console)
+    ip_addresses: []
+    # Exemple : ["192.168.1.100", "10.0.0.0/8"]
+  
+  # Notifications
+  notifications:
+    # Notifier lors de l'enregistrement
+    on_enrollment: true
+    
+    # Notifier lors d'échecs répétés
+    on_failed_auth: true
+    
+    # Notifier lors de l'utilisation de codes de secours
+    on_backup_code_use: true
+    
+    # Notifier lors du verrouillage de compte
+    on_account_lockout: true
+
+# ----------------------------------------------------------------------------
+# Configuration des rapports
+# ----------------------------------------------------------------------------
+reporting:
+  # Répertoire de sortie des rapports
+  output_dir: "./reports"
+  
+  # Formats de rapport
+  formats:
+    html: true
+    pdf: false
+    json: true
+    csv: true
+  
+  # Inclure les graphiques dans les rapports
+  include_charts: true
+  
+  # Envoyer les rapports par email
+  email_reports: false
+  
+  # Destinataires des rapports
+  recipients:
+    - "admin@example.com"
+  
+  # Rétention des rapports (jours)
+  retention_days: 90
+
+# ----------------------------------------------------------------------------
+# Configuration email (pour notifications)
+# ----------------------------------------------------------------------------
+email:
+  # Serveur SMTP
+  smtp_server: "smtp.example.com"
+  smtp_port: 587
+  
+  # Utiliser TLS/SSL
+  smtp_use_tls: true
+  smtp_use_ssl: false
+  
+  # Authentification SMTP
+  smtp_username: "ansible@example.com"
+  smtp_password: "{{ vault_smtp_password }}"
+  
+  # Adresse d'expédition
+  from_address: "noreply-mfa@example.com"
+  from_name: "IBM i MFA System"
+  
+  # Adresses des administrateurs
+  admin_addresses:
+    - "admin@example.com"
+    - "security@example.com"
+  
+  # Templates d'email
+  templates:
+    enrollment: "templates/email_enrollment.j2"
+    failed_auth: "templates/email_failed_auth.j2"
+    lockout: "templates/email_lockout.j2"
+
+# ----------------------------------------------------------------------------
+# Configuration des logs
+# ----------------------------------------------------------------------------
+logging:
+  # Niveau de log : DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+  
+  # Fichier de log local (sur la station Ansible)
+  local_log_file: "/var/log/ansible/powersc_mfa.log"
+  
+  # Rotation des logs
+  log_rotation:
+    enabled: true
+    max_size_mb: 100
+    backup_count: 10
+  
+  # Logs sur IBM i
+  ibmi_logs:
+    # Utiliser le journal d'audit IBM i
+    use_audit_journal: true
+    
+    # Niveau de détail : *BASIC, *DETAIL, *FULL
+    detail_level: "*DETAIL"
+    
+    # Rétention des logs (jours)
+    retention_days: 365
+
+# ----------------------------------------------------------------------------
+# Configuration de sauvegarde
+# ----------------------------------------------------------------------------
+backup:
+  # Activer les sauvegardes automatiques
+  enabled: true
+  
+  # Répertoire de sauvegarde
+  backup_dir: "/backup/powersc_mfa"
+  
+  # Fréquence des sauvegardes
+  schedule:
+    daily: true
+    weekly: true
+    monthly: true
+  
+  # Rétention des sauvegardes
+  retention:
+    daily: 7
+    weekly: 4
+    monthly: 12
+  
+  # Chiffrement des sauvegardes
+  encryption:
+    enabled: true
+    algorithm: "AES256"
+
+# ----------------------------------------------------------------------------
+# Configuration de test
+# ----------------------------------------------------------------------------
+testing:
+  # Créer un utilisateur de test
+  create_test_user: true
+  
+  # Nom de l'utilisateur de test
+  test_user: "MFATEST"
+  
+  # Supprimer l'utilisateur de test après validation
+  cleanup_test_user: true
+  
+  # Tests à exécuter
+  tests:
+    - connectivity
+    - authentication
+    - backup_codes
+    - policies
+    - logging
+
+# ----------------------------------------------------------------------------
+# Configuration avancée
+# ----------------------------------------------------------------------------
+advanced:
+  # Synchronisation horaire
+  time_sync:
+    # Vérifier la synchronisation avec NTP
+    check_ntp: true
+    
+    # Serveurs NTP
+    ntp_servers:
+      - "time.google.com"
+      - "pool.ntp.org"
+    
+    # Tolérance de décalage (secondes)
+    max_drift: 30
+  
+  # Performance
+  performance:
+    # Timeout pour les opérations (secondes)
+    operation_timeout: 300
+    
+    # Nombre de tentatives en cas d'échec
+    retry_count: 3
+    
+    # Délai entre les tentatives (secondes)
+    retry_delay: 5
+  
+  # Sécurité
+  security:
+    # Forcer HTTPS pour les communications
+    force_https: true
+    
+    # Vérifier les certificats SSL
+    verify_ssl: true
+    
+    # Chiffrement des secrets en transit
+    encrypt_secrets: true
+
+# ----------------------------------------------------------------------------
+# Variables d'environnement
+# ----------------------------------------------------------------------------
+environment:
+  # Type d'environnement : development, staging, production
+  type: "production"
+  
+  # Nom de l'environnement
+  name: "Production IBM i"
+  
+  # Tags pour identification
+  tags:
+    project: "PowerSC MFA"
+    owner: "IT Security"
+    cost_center: "IT-001"
+
+# ----------------------------------------------------------------------------
+# Intégration avec d'autres systèmes
+# ----------------------------------------------------------------------------
+integration:
+  # SIEM (Security Information and Event Management)
+  siem:
+    enabled: false
+    type: "splunk"  # splunk, qradar, elk
+    endpoint: "https://siem.example.com:8088"
+    token: "{{ vault_siem_token }}"
+  
+  # Ticketing system
+  ticketing:
+    enabled: false
+    type: "servicenow"  # servicenow, jira, remedy
+    endpoint: "https://tickets.example.com/api"
+    api_key: "{{ vault_ticketing_api_key }}"
+  
+  # LDAP/Active Directory
+  ldap:
+    enabled: false
+    server: "ldap.example.com"
+    port: 389
+    use_ssl: true
+    base_dn: "dc=example,dc=com"
+    bind_dn: "cn=ansible,ou=service,dc=example,dc=com"
+    bind_password: "{{ vault_ldap_password }}"
+
+# ----------------------------------------------------------------------------
+# Conformité et audit
+# ----------------------------------------------------------------------------
+compliance:
+  # Standards de conformité
+  standards:
+    - "PCI-DSS"
+    - "SOX"
+    - "GDPR"
+  
+  # Audits automatiques
+  automated_audits:
+    enabled: true
+    frequency: "weekly"
+    
+  # Rapports de conformité
+  compliance_reports:
+    enabled: true
+    recipients:
+      - "compliance@example.com"
+      - "audit@example.com"
+
+# ============================================================================
+# FIN DE LA CONFIGURATION
+# ============================================================================
+# Pour utiliser ce fichier :
+# 1. Copier vers vars.yml
+# 2. Adapter les valeurs à votre environnement
+# 3. Protéger les secrets avec Ansible Vault
+# 4. Exécuter les playbooks
+# ============================================================================
+
+# Made with Bob

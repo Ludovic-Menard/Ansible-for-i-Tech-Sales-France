@@ -1,0 +1,393 @@
+---
+# ============================================================================
+# Playbook : Vérification des prérequis PowerSC MFA
+# ============================================================================
+# Ce playbook vérifie que tous les prérequis sont remplis avant de configurer
+# PowerSC MFA sur IBM i
+# ============================================================================
+
+- name: Vérification des prérequis PowerSC MFA sur IBM i
+  hosts: ibmi_servers
+  gather_facts: yes
+  vars_files:
+    - vars.yml
+  
+  vars:
+    # Timestamp pour les rapports
+    timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    report_file: "{{ reporting.output_dir }}/prerequisites_report_{{ timestamp }}.html"
+    
+    # Résultats des vérifications
+    check_results: []
+    
+    # Statut global
+    all_checks_passed: true
+
+  tasks:
+    # ------------------------------------------------------------------------
+    # Préparation
+    # ------------------------------------------------------------------------
+    - name: Créer le répertoire de rapports
+      delegate_to: localhost
+      file:
+        path: "{{ reporting.output_dir }}"
+        state: directory
+        mode: '0755'
+      run_once: true
+
+    - name: Afficher le début de la vérification
+      debug:
+        msg:
+          - "=========================================="
+          - "Vérification des prérequis PowerSC MFA"
+          - "Serveur : {{ inventory_hostname }}"
+          - "Date : {{ ansible_date_time.iso8601 }}"
+          - "=========================================="
+
+    # ------------------------------------------------------------------------
+    # 1. Vérification de la version IBM i
+    # ------------------------------------------------------------------------
+    - name: Récupérer la version d'IBM i
+      ibmi_sql_query:
+        sql: "SELECT OS_VERSION, OS_RELEASE FROM SYSIBMADM.ENV_SYS_INFO"
+      register: ibmi_version
+
+    - name: Vérifier la version minimale d'IBM i
+      set_fact:
+        version_check:
+          name: "Version IBM i"
+          status: "{{ 'PASS' if (ibmi_version.row[0].OS_VERSION | int >= 7 and ibmi_version.row[0].OS_RELEASE | int >= 3) else 'FAIL' }}"
+          message: "Version détectée : V{{ ibmi_version.row[0].OS_VERSION }}R{{ ibmi_version.row[0].OS_RELEASE }}"
+          details: "Minimum requis : V7R3"
+          severity: "critical"
+
+    - name: Ajouter le résultat de vérification de version
+      set_fact:
+        check_results: "{{ check_results + [version_check] }}"
+
+    - name: Afficher la version IBM i
+      debug:
+        msg: "{{ version_check }}"
+
+    # ------------------------------------------------------------------------
+    # 2. Vérification de l'installation de PowerSC
+    # ------------------------------------------------------------------------
+    - name: Vérifier l'installation de PowerSC
+      ibmi_cl_command:
+        cmd: "DSPOBJD OBJ(QPWRSC/*ALL) OBJTYPE(*LIB)"
+      register: powersc_check
+      ignore_errors: yes
+
+    - name: Enregistrer le résultat PowerSC
+      set_fact:
+        powersc_install_check:
+          name: "Installation PowerSC"
+          status: "{{ 'PASS' if powersc_check.rc == 0 else 'FAIL' }}"
+          message: "{{ 'PowerSC est installé' if powersc_check.rc == 0 else 'PowerSC n''est pas installé' }}"
+          details: "Bibliothèque QPWRSC requise"
+          severity: "critical"
+
+    - name: Ajouter le résultat PowerSC
+      set_fact:
+        check_results: "{{ check_results + [powersc_install_check] }}"
+
+    # ------------------------------------------------------------------------
+    # 3. Vérification de la licence PowerSC
+    # ------------------------------------------------------------------------
+    - name: Vérifier la licence PowerSC
+      ibmi_cl_command:
+        cmd: "DSPLICKEY"
+      register: license_check
+      ignore_errors: yes
+
+    - name: Rechercher la licence PowerSC dans la sortie
+      set_fact:
+        powersc_licensed: "{{ '5733-SC1' in license_check.stdout | default('') }}"
+      when: license_check.rc == 0
+
+    - name: Enregistrer le résultat de licence
+      set_fact:
+        license_result:
+          name: "Licence PowerSC"
+          status: "{{ 'PASS' if powersc_licensed | default(false) else 'WARN' }}"
+          message: "{{ 'Licence 5733-SC1 détectée' if powersc_licensed | default(false) else 'Vérification manuelle requise' }}"
+          details: "Produit : 5733-SC1 (PowerSC for IBM i)"
+          severity: "high"
+
+    - name: Ajouter le résultat de licence
+      set_fact:
+        check_results: "{{ check_results + [license_result] }}"
+
+    # ------------------------------------------------------------------------
+    # 4. Vérification des PTFs requis
+    # ------------------------------------------------------------------------
+    - name: Vérifier les PTFs PowerSC
+      ibmi_cl_command:
+        cmd: "DSPPTF LICPGM(5733SC1)"
+      register: ptf_check
+      ignore_errors: yes
+
+    - name: Enregistrer le résultat des PTFs
+      set_fact:
+        ptf_result:
+          name: "PTFs PowerSC"
+          status: "{{ 'PASS' if ptf_check.rc == 0 else 'WARN' }}"
+          message: "{{ 'PTFs trouvés' if ptf_check.rc == 0 else 'Vérification manuelle des PTFs requise' }}"
+          details: "Vérifier les PTFs requis dans la documentation"
+          severity: "high"
+
+    - name: Ajouter le résultat des PTFs
+      set_fact:
+        check_results: "{{ check_results + [ptf_result] }}"
+
+    # ------------------------------------------------------------------------
+    # 5. Vérification des privilèges utilisateur
+    # ------------------------------------------------------------------------
+    - name: Vérifier les privilèges de l'utilisateur Ansible
+      ibmi_sql_query:
+        sql: |
+          SELECT 
+            AUTHORIZATION_NAME,
+            USER_CLASS_NAME,
+            SPECIAL_AUTHORITIES
+          FROM QSYS2.USER_INFO
+          WHERE AUTHORIZATION_NAME = CURRENT USER
+      register: user_privileges
+
+    - name: Analyser les privilèges
+      set_fact:
+        has_secadm: "{{ '*SECADM' in user_privileges.row[0].SPECIAL_AUTHORITIES }}"
+        has_allobj: "{{ '*ALLOBJ' in user_privileges.row[0].SPECIAL_AUTHORITIES }}"
+        user_class: "{{ user_privileges.row[0].USER_CLASS_NAME }}"
+
+    - name: Enregistrer le résultat des privilèges
+      set_fact:
+        privileges_result:
+          name: "Privilèges utilisateur"
+          status: "{{ 'PASS' if (has_secadm and has_allobj) else 'FAIL' }}"
+          message: "Utilisateur : {{ user_privileges.row[0].AUTHORIZATION_NAME }}"
+          details: "*SECADM: {{ has_secadm }}, *ALLOBJ: {{ has_allobj }}, Classe: {{ user_class }}"
+          severity: "critical"
+
+    - name: Ajouter le résultat des privilèges
+      set_fact:
+        check_results: "{{ check_results + [privileges_result] }}"
+
+    # ------------------------------------------------------------------------
+    # 6. Vérification de l'espace disque
+    # ------------------------------------------------------------------------
+    - name: Vérifier l'espace disque disponible
+      ibmi_sql_query:
+        sql: |
+          SELECT 
+            ASP_NUMBER,
+            TOTAL_CAPACITY_AVAILABLE,
+            STORAGE_CAPACITY_USED,
+            STORAGE_CAPACITY_AVAILABLE,
+            DECIMAL((STORAGE_CAPACITY_AVAILABLE * 100.0) / TOTAL_CAPACITY_AVAILABLE, 5, 2) AS PCT_AVAILABLE
+          FROM QSYS2.ASP_INFO
+          WHERE ASP_NUMBER = 1
+      register: disk_space
+
+    - name: Analyser l'espace disque
+      set_fact:
+        disk_available_mb: "{{ disk_space.row[0].STORAGE_CAPACITY_AVAILABLE }}"
+        disk_pct_available: "{{ disk_space.row[0].PCT_AVAILABLE }}"
+        disk_sufficient: "{{ disk_space.row[0].STORAGE_CAPACITY_AVAILABLE | int > 500 }}"
+
+    - name: Enregistrer le résultat de l'espace disque
+      set_fact:
+        disk_result:
+          name: "Espace disque"
+          status: "{{ 'PASS' if disk_sufficient else 'WARN' }}"
+          message: "{{ disk_available_mb }} MB disponibles ({{ disk_pct_available }}%)"
+          details: "Minimum recommandé : 500 MB"
+          severity: "medium"
+
+    - name: Ajouter le résultat de l'espace disque
+      set_fact:
+        check_results: "{{ check_results + [disk_result] }}"
+
+    # ------------------------------------------------------------------------
+    # 7. Vérification de la configuration réseau
+    # ------------------------------------------------------------------------
+    - name: Vérifier le service SSH
+      ibmi_cl_command:
+        cmd: "NETSTAT *CNN"
+      register: ssh_check
+      ignore_errors: yes
+
+    - name: Enregistrer le résultat SSH
+      set_fact:
+        ssh_result:
+          name: "Service SSH"
+          status: "{{ 'PASS' if ssh_check.rc == 0 else 'WARN' }}"
+          message: "{{ 'SSH actif' if ssh_check.rc == 0 else 'Vérification SSH requise' }}"
+          details: "Port 22 doit être accessible"
+          severity: "high"
+
+    - name: Ajouter le résultat SSH
+      set_fact:
+        check_results: "{{ check_results + [ssh_result] }}"
+
+    # ------------------------------------------------------------------------
+    # 8. Vérification de la synchronisation horaire
+    # ------------------------------------------------------------------------
+    - name: Vérifier l'heure système
+      ibmi_sql_query:
+        sql: "SELECT CURRENT TIMESTAMP AS SYSTEM_TIME FROM SYSIBM.SYSDUMMY1"
+      register: system_time
+
+    - name: Calculer le décalage horaire
+      set_fact:
+        time_drift: "{{ ((ansible_date_time.epoch | int) - (system_time.row[0].SYSTEM_TIME | to_datetime('%Y-%m-%d-%H.%M.%S.%f')).timestamp() | int) | abs }}"
+
+    - name: Enregistrer le résultat de synchronisation horaire
+      set_fact:
+        time_result:
+          name: "Synchronisation horaire"
+          status: "{{ 'PASS' if (time_drift | int < 30) else 'WARN' }}"
+          message: "Décalage : {{ time_drift }} secondes"
+          details: "Maximum recommandé : 30 secondes pour TOTP"
+          severity: "high"
+
+    - name: Ajouter le résultat de synchronisation
+      set_fact:
+        check_results: "{{ check_results + [time_result] }}"
+
+    # ------------------------------------------------------------------------
+    # 9. Vérification du niveau de sécurité
+    # ------------------------------------------------------------------------
+    - name: Vérifier le niveau de sécurité système
+      ibmi_sql_query:
+        sql: |
+          SELECT 
+            SYSTEM_VALUE_NAME,
+            CURRENT_NUMERIC_VALUE
+          FROM QSYS2.SYSTEM_VALUE_INFO
+          WHERE SYSTEM_VALUE_NAME = 'QSECURITY'
+      register: security_level
+
+    - name: Enregistrer le résultat du niveau de sécurité
+      set_fact:
+        security_result:
+          name: "Niveau de sécurité"
+          status: "{{ 'PASS' if (security_level.row[0].CURRENT_NUMERIC_VALUE | int >= 40) else 'WARN' }}"
+          message: "QSECURITY = {{ security_level.row[0].CURRENT_NUMERIC_VALUE }}"
+          details: "Recommandé : 40 ou 50"
+          severity: "medium"
+
+    - name: Ajouter le résultat du niveau de sécurité
+      set_fact:
+        check_results: "{{ check_results + [security_result] }}"
+
+    # ------------------------------------------------------------------------
+    # 10. Vérification de Python sur IBM i
+    # ------------------------------------------------------------------------
+    - name: Vérifier l'installation de Python
+      ibmi_cl_command:
+        cmd: "QSH CMD('python3 --version')"
+      register: python_check
+      ignore_errors: yes
+
+    - name: Enregistrer le résultat Python
+      set_fact:
+        python_result:
+          name: "Python sur IBM i"
+          status: "{{ 'PASS' if python_check.rc == 0 else 'WARN' }}"
+          message: "{{ python_check.stdout | default('Python non trouvé') }}"
+          details: "Python 3.6+ requis pour certaines opérations"
+          severity: "low"
+
+    - name: Ajouter le résultat Python
+      set_fact:
+        check_results: "{{ check_results + [python_result] }}"
+
+    # ------------------------------------------------------------------------
+    # Analyse des résultats
+    # ------------------------------------------------------------------------
+    - name: Compter les résultats
+      set_fact:
+        total_checks: "{{ check_results | length }}"
+        passed_checks: "{{ check_results | selectattr('status', 'equalto', 'PASS') | list | length }}"
+        failed_checks: "{{ check_results | selectattr('status', 'equalto', 'FAIL') | list | length }}"
+        warning_checks: "{{ check_results | selectattr('status', 'equalto', 'WARN') | list | length }}"
+
+    - name: Déterminer le statut global
+      set_fact:
+        all_checks_passed: "{{ failed_checks | int == 0 }}"
+        overall_status: "{{ 'SUCCESS' if (failed_checks | int == 0) else 'FAILED' }}"
+
+    # ------------------------------------------------------------------------
+    # Génération du rapport
+    # ------------------------------------------------------------------------
+    - name: Générer le rapport HTML
+      delegate_to: localhost
+      template:
+        src: templates/prerequisites_report.html.j2
+        dest: "{{ report_file }}"
+      vars:
+        report_title: "Rapport de vérification des prérequis PowerSC MFA"
+        report_date: "{{ ansible_date_time.iso8601 }}"
+        server_name: "{{ inventory_hostname }}"
+        checks: "{{ check_results }}"
+        summary:
+          total: "{{ total_checks }}"
+          passed: "{{ passed_checks }}"
+          failed: "{{ failed_checks }}"
+          warnings: "{{ warning_checks }}"
+          status: "{{ overall_status }}"
+
+    # ------------------------------------------------------------------------
+    # Affichage du résumé
+    # ------------------------------------------------------------------------
+    - name: Afficher le résumé des vérifications
+      debug:
+        msg:
+          - "=========================================="
+          - "RÉSUMÉ DES VÉRIFICATIONS"
+          - "=========================================="
+          - "Total de vérifications : {{ total_checks }}"
+          - "Réussies (PASS) : {{ passed_checks }}"
+          - "Échouées (FAIL) : {{ failed_checks }}"
+          - "Avertissements (WARN) : {{ warning_checks }}"
+          - "Statut global : {{ overall_status }}"
+          - "=========================================="
+          - "Rapport généré : {{ report_file }}"
+          - "=========================================="
+
+    - name: Afficher les vérifications échouées
+      debug:
+        msg: "ÉCHEC : {{ item.name }} - {{ item.message }}"
+      loop: "{{ check_results | selectattr('status', 'equalto', 'FAIL') | list }}"
+      when: failed_checks | int > 0
+
+    - name: Afficher les avertissements
+      debug:
+        msg: "AVERTISSEMENT : {{ item.name }} - {{ item.message }}"
+      loop: "{{ check_results | selectattr('status', 'equalto', 'WARN') | list }}"
+      when: warning_checks | int > 0
+
+    # ------------------------------------------------------------------------
+    # Échec si des vérifications critiques ont échoué
+    # ------------------------------------------------------------------------
+    - name: Échouer si des vérifications critiques ont échoué
+      fail:
+        msg: |
+          Des vérifications critiques ont échoué !
+          Veuillez corriger les problèmes avant de continuer.
+          Consultez le rapport : {{ report_file }}
+      when: not all_checks_passed
+
+    - name: Succès de la vérification
+      debug:
+        msg:
+          - "✅ Tous les prérequis sont remplis !"
+          - "Vous pouvez procéder à la configuration de PowerSC MFA."
+      when: all_checks_passed
+
+# ============================================================================
+# FIN DU PLAYBOOK
+# ============================================================================
+
+# Made with Bob
