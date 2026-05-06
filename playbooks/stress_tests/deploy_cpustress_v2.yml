@@ -1,0 +1,129 @@
+---
+# ==============================================================================
+# Playbook: Déployer et Compiler CPUSTRESS V2
+# Description: Déploie le programme de stress test CPU V2 sur les serveurs IBM i
+# Usage: ansible-playbook deploy_cpustress_v2.yml
+# ==============================================================================
+
+- name: Déployer CPUSTRESS V2 sur IBM i
+  hosts: ibmi_servers
+  gather_facts: yes
+  
+  vars:
+    source_file: "../../CPUSTRESS_V2.RPGLE"
+    target_lib: "STRESSLIB"
+    source_pf: "QRPGLESRC"
+    program_name: "CPUSTRV2"
+    member_name: "CPUSTRV2"
+    
+  tasks:
+    - name: Afficher informations de déploiement
+      debug:
+        msg:
+          - "Déploiement de CPUSTRESS V2"
+          - "Serveur: {{ inventory_hostname }}"
+          - "Bibliothèque cible: {{ target_lib }}"
+          - "Programme: {{ program_name }}"
+    
+    - name: Vérifier si la bibliothèque existe
+      ibm.power_ibmi.ibmi_object_find:
+        object_name: "{{ target_lib }}"
+        object_type: "*LIB"
+      register: lib_check
+      ignore_errors: yes
+    
+    - name: Créer la bibliothèque si nécessaire
+      ibm.power_ibmi.ibmi_cl_command:
+        cmd: "CRTLIB LIB({{ target_lib }}) TEXT('CPU Stress Test Library V2')"
+      when: lib_check.object_list | length == 0
+      register: create_lib
+      
+    - name: Afficher résultat création bibliothèque
+      debug:
+        msg: "Bibliothèque {{ target_lib }} créée avec succès"
+      when: create_lib.changed
+    
+    - name: Vérifier si le source physical file existe
+      ibm.power_ibmi.ibmi_object_find:
+        object_name: "{{ source_pf }}"
+        object_type: "*FILE"
+        lib_name: "{{ target_lib }}"
+      register: srcpf_check
+      ignore_errors: yes
+    
+    - name: Créer source physical file
+      ibm.power_ibmi.ibmi_cl_command:
+        cmd: "CRTSRCPF FILE({{ target_lib }}/{{ source_pf }}) RCDLEN(112) TEXT('RPG Source File')"
+      when: srcpf_check.object_list | length == 0
+      register: create_srcpf
+      
+    - name: Copier le fichier source vers IBM i
+      ibm.power_ibmi.ibmi_copy:
+        src: "{{ source_file }}"
+        lib_name: "{{ target_lib }}"
+        force: yes
+      register: copy_result
+      
+    - name: Afficher résultat de la copie
+      debug:
+        var: copy_result
+        
+    - name: Compiler le programme RPG
+      ibm.power_ibmi.ibmi_cl_command:
+        cmd: >
+          CRTBNDRPG PGM({{ target_lib }}/{{ program_name }})
+          SRCFILE({{ target_lib }}/{{ source_pf }})
+          SRCMBR({{ member_name }})
+          DFTACTGRP(*NO)
+          ACTGRP(*NEW)
+          DBGVIEW(*SOURCE)
+          TEXT('CPU Stress Test V2.0')
+      register: compile_result
+      
+    - name: Afficher résultat de compilation
+      debug:
+        msg:
+          - "Compilation réussie"
+          - "Programme: {{ target_lib }}/{{ program_name }}"
+          - "Commande: {{ compile_result.cmd }}"
+      when: compile_result.rc == 0
+      
+    - name: Vérifier que le programme existe
+      ibm.power_ibmi.ibmi_object_find:
+        object_name: "{{ program_name }}"
+        object_type: "*PGM"
+        lib_name: "{{ target_lib }}"
+      register: pgm_check
+      
+    - name: Afficher informations du programme
+      debug:
+        msg:
+          - "Programme trouvé: {{ pgm_check.object_list[0].OBJNAME }}"
+          - "Bibliothèque: {{ pgm_check.object_list[0].OBJLIB }}"
+          - "Type: {{ pgm_check.object_list[0].OBJTYPE }}"
+          - "Attribut: {{ pgm_check.object_list[0].OBJATTRIBUTE }}"
+      when: pgm_check.object_list | length > 0
+      
+    - name: Créer script CL pour exécution multiple
+      ibm.power_ibmi.ibmi_cl_command:
+        cmd: |
+          CRTSRCPF FILE({{ target_lib }}/QCLSRC) RCDLEN(112)
+      ignore_errors: yes
+      
+    - name: Résumé du déploiement
+      debug:
+        msg:
+          - "=========================================="
+          - "Déploiement CPUSTRESS V2 terminé"
+          - "=========================================="
+          - "Bibliothèque: {{ target_lib }}"
+          - "Programme: {{ program_name }}"
+          - "Utilisation:"
+          - "  CALL PGM({{ target_lib }}/{{ program_name }}) PARM(duration 'workload' ' ')"
+          - "Exemples:"
+          - "  CALL PGM({{ target_lib }}/{{ program_name }}) PARM(60 'LIGHT' ' ')"
+          - "  CALL PGM({{ target_lib }}/{{ program_name }}) PARM(300 'MATH' ' ')"
+          - "  CALL PGM({{ target_lib }}/{{ program_name }}) PARM(600 'HEAVY' ' ')"
+          - "=========================================="
+
+# Made with Bob

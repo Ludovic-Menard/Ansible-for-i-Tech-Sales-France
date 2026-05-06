@@ -1,0 +1,229 @@
+---
+# ==============================================================================
+# Playbook: Monitorer Tests de Stress CPU V2
+# Description: Surveille les jobs de stress et collecte les métriques
+# Usage: ansible-playbook monitor_cpustress_v2.yml
+# ==============================================================================
+
+- name: Monitorer Tests de Stress CPU V2
+  hosts: ibmi_servers
+  gather_facts: yes
+  
+  vars:
+    job_prefix: "STRV2"
+    monitoring_interval: 10          # Intervalle entre les checks (secondes)
+    max_iterations: 30               # Nombre maximum de checks
+    report_file: "/tmp/stress_report_{{ ansible_date_time.iso8601_basic_short }}.html"
+    
+  tasks:
+    - name: Initialiser le monitoring
+      debug:
+        msg:
+          - "=========================================="
+          - "Monitoring Tests de Stress CPU V2"
+          - "=========================================="
+          - "Serveur: {{ inventory_hostname }}"
+          - "Préfixe jobs: {{ job_prefix }}"
+          - "Intervalle: {{ monitoring_interval }} secondes"
+          - "=========================================="
+    
+    - name: Collecter métriques système
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            CURRENT_TIMESTAMP AS TIMESTAMP,
+            ELAPSED_CPU_USED,
+            ELAPSED_CPU_SHARED,
+            CURRENT_CPU_CAPACITY,
+            CURRENT_PROCESSING_CAPACITY,
+            SYSTEM_ASP_USED,
+            TOTAL_JOBS_IN_SYSTEM,
+            ACTIVE_JOBS_IN_SYSTEM,
+            MAIN_STORAGE_SIZE,
+            CURRENT_UNPROTECTED_STORAGE_USED
+          FROM QSYS2.SYSTEM_STATUS_INFO
+      register: system_metrics
+      
+    - name: Afficher métriques système
+      debug:
+        msg:
+          - "Métriques Système:"
+          - "  CPU utilisé: {{ system_metrics.row[0].ELAPSED_CPU_USED }}%"
+          - "  Capacité CPU: {{ system_metrics.row[0].CURRENT_CPU_CAPACITY }}"
+          - "  Capacité traitement: {{ system_metrics.row[0].CURRENT_PROCESSING_CAPACITY }}"
+          - "  ASP système: {{ system_metrics.row[0].SYSTEM_ASP_USED }}%"
+          - "  Jobs actifs: {{ system_metrics.row[0].ACTIVE_JOBS_IN_SYSTEM }}"
+          - "  Mémoire utilisée: {{ system_metrics.row[0].CURRENT_UNPROTECTED_STORAGE_USED }} MB"
+    
+    - name: Lister les jobs de stress actifs
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            JOB_NAME,
+            JOB_STATUS,
+            JOB_TYPE,
+            SUBSYSTEM,
+            FUNCTION,
+            CPU_TIME,
+            ELAPSED_CPU_PERCENTAGE,
+            ELAPSED_CPU_TIME,
+            ELAPSED_TIME,
+            ELAPSED_TOTAL_DISK_IO_COUNT,
+            THREAD_COUNT
+          FROM TABLE(QSYS2.ACTIVE_JOB_INFO(
+            JOB_NAME_FILTER => '{{ job_prefix }}*'
+          ))
+          ORDER BY ELAPSED_CPU_PERCENTAGE DESC
+      register: stress_jobs
+      
+    - name: Afficher jobs de stress
+      debug:
+        msg:
+          - "=========================================="
+          - "Jobs de Stress Actifs: {{ stress_jobs.row | length }}"
+          - "=========================================="
+      
+    - name: Détails des jobs
+      debug:
+        msg:
+          - "Job: {{ item.JOB_NAME }}"
+          - "  Status: {{ item.JOB_STATUS }}"
+          - "  Fonction: {{ item.FUNCTION }}"
+          - "  CPU %: {{ item.ELAPSED_CPU_PERCENTAGE }}%"
+          - "  CPU Time: {{ item.CPU_TIME }} ms"
+          - "  Elapsed: {{ item.ELAPSED_TIME }} sec"
+          - "  Disk I/O: {{ item.ELAPSED_TOTAL_DISK_IO_COUNT }}"
+      loop: "{{ stress_jobs.row }}"
+      when: stress_jobs.row | length > 0
+      
+    - name: Calculer statistiques agrégées
+      set_fact:
+        total_jobs: "{{ stress_jobs.row | length }}"
+        avg_cpu_pct: "{{ (stress_jobs.row | map(attribute='ELAPSED_CPU_PERCENTAGE') | map('float') | sum / (stress_jobs.row | length)) | round(2) if stress_jobs.row | length > 0 else 0 }}"
+        total_cpu_time: "{{ stress_jobs.row | map(attribute='CPU_TIME') | map('int') | sum }}"
+        max_cpu_pct: "{{ stress_jobs.row | map(attribute='ELAPSED_CPU_PERCENTAGE') | map('float') | max if stress_jobs.row | length > 0 else 0 }}"
+      when: stress_jobs.row | length > 0
+      
+    - name: Afficher statistiques
+      debug:
+        msg:
+          - "=========================================="
+          - "Statistiques Agrégées"
+          - "=========================================="
+          - "Total jobs: {{ total_jobs }}"
+          - "CPU moyen: {{ avg_cpu_pct }}%"
+          - "CPU max: {{ max_cpu_pct }}%"
+          - "CPU total: {{ total_cpu_time }} ms"
+          - "=========================================="
+      when: stress_jobs.row | length > 0
+      
+    - name: Vérifier les jobs terminés
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            JOB_NAME,
+            JOB_STATUS,
+            COMPLETION_STATUS,
+            CPU_TIME,
+            ELAPSED_TIME
+          FROM TABLE(QSYS2.JOB_INFO(
+            JOB_NAME_FILTER => '{{ job_prefix }}*'
+          ))
+          WHERE JOB_STATUS = 'OUTQ'
+          ORDER BY JOB_END_TIME DESC
+          FETCH FIRST 10 ROWS ONLY
+      register: completed_jobs
+      ignore_errors: yes
+      
+    - name: Afficher jobs terminés
+      debug:
+        msg:
+          - "Jobs Terminés: {{ completed_jobs.row | length }}"
+          - "{{ completed_jobs.row }}"
+      when: completed_jobs.row is defined and completed_jobs.row | length > 0
+      
+    - name: Collecter informations CPU détaillées
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            PROCESSOR_TYPE,
+            NUMBER_PROCESSORS,
+            ACTIVE_PROCESSORS,
+            PROCESSOR_CAPACITY,
+            CURRENT_CPU_CAPACITY,
+            UNCAPPED_CPU_CAPACITY,
+            SHARED_PROCESSOR_POOL_ID
+          FROM QSYS2.SYSTEM_STATUS_INFO
+      register: cpu_details
+      
+    - name: Afficher détails CPU
+      debug:
+        msg:
+          - "=========================================="
+          - "Configuration CPU"
+          - "=========================================="
+          - "Type: {{ cpu_details.row[0].PROCESSOR_TYPE }}"
+          - "Processeurs: {{ cpu_details.row[0].NUMBER_PROCESSORS }}"
+          - "Actifs: {{ cpu_details.row[0].ACTIVE_PROCESSORS }}"
+          - "Capacité: {{ cpu_details.row[0].PROCESSOR_CAPACITY }}"
+          - "Capacité actuelle: {{ cpu_details.row[0].CURRENT_CPU_CAPACITY }}"
+          - "=========================================="
+      
+    - name: Générer rapport HTML
+      template:
+        src: stress_report_v2.html.j2
+        dest: "{{ report_file }}"
+      delegate_to: localhost
+      vars:
+        report_data:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          hostname: "{{ inventory_hostname }}"
+          system_metrics: "{{ system_metrics.row[0] }}"
+          stress_jobs: "{{ stress_jobs.row }}"
+          cpu_details: "{{ cpu_details.row[0] }}"
+          statistics:
+            total_jobs: "{{ total_jobs | default(0) }}"
+            avg_cpu_pct: "{{ avg_cpu_pct | default(0) }}"
+            max_cpu_pct: "{{ max_cpu_pct | default(0) }}"
+      when: stress_jobs.row | length > 0
+      ignore_errors: yes
+      
+    - name: Résumé du monitoring
+      debug:
+        msg:
+          - "=========================================="
+          - "Résumé du Monitoring"
+          - "=========================================="
+          - "Serveur: {{ inventory_hostname }}"
+          - "Timestamp: {{ ansible_date_time.iso8601 }}"
+          - "Jobs actifs: {{ stress_jobs.row | length }}"
+          - "CPU système: {{ system_metrics.row[0].ELAPSED_CPU_USED }}%"
+          - "Rapport: {{ report_file }}"
+          - "=========================================="
+          - "Commandes utiles:"
+          - "  WRKACTJOB JOB({{ job_prefix }}*)"
+          - "  WRKSYSSTS"
+          - "  WRKJOB JOB(jobnumber/user/jobname)"
+          - "=========================================="
+
+# ==============================================================================
+# Monitoring continu (optionnel)
+# ==============================================================================
+- name: Monitoring Continu (Optionnel)
+  hosts: ibmi_servers
+  gather_facts: no
+  
+  vars:
+    job_prefix: "STRV2"
+    monitoring_interval: 10
+    max_iterations: 30
+    
+  tasks:
+    - name: Boucle de monitoring
+      include_tasks: monitor_loop.yml
+      loop: "{{ range(1, max_iterations + 1) | list }}"
+      loop_control:
+        loop_var: iteration
+      when: false  # Désactivé par défaut, mettre à true pour activer
+
+# Made with Bob

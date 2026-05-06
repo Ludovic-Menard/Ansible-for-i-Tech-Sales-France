@@ -1,0 +1,142 @@
+---
+# ==============================================================================
+# Playbook: Exécuter Tests de Stress CPU V2
+# Description: Lance des tests de stress CPU avec différentes configurations
+# Usage: ansible-playbook run_cpustress_v2.yml -e "workload_type=HEAVY duration=300"
+# ==============================================================================
+
+- name: Exécuter Tests de Stress CPU V2
+  hosts: ibmi_servers
+  gather_facts: yes
+  
+  vars:
+    target_lib: "STRESSLIB"
+    program_name: "CPUSTRV2"
+    duration: 300                    # Durée en secondes (défaut: 5 minutes)
+    workload_type: "MATH"            # LIGHT, MATH, HEAVY, MIXED
+    num_jobs: 4                      # Nombre de jobs parallèles
+    log_file: " "                    # Fichier log IFS (optionnel)
+    job_prefix: "STRV2"              # Préfixe des noms de jobs
+    
+  tasks:
+    - name: Afficher configuration du test
+      debug:
+        msg:
+          - "=========================================="
+          - "Configuration Test de Stress CPU V2"
+          - "=========================================="
+          - "Serveur: {{ inventory_hostname }}"
+          - "Durée: {{ duration }} secondes ({{ (duration / 60) | round(1) }} minutes)"
+          - "Type de charge: {{ workload_type }}"
+          - "Nombre de jobs: {{ num_jobs }}"
+          - "Préfixe jobs: {{ job_prefix }}"
+          - "=========================================="
+    
+    - name: Vérifier que le programme existe
+      ibm.power_ibmi.ibmi_object_find:
+        object_name: "{{ program_name }}"
+        object_type: "*PGM"
+        lib_name: "{{ target_lib }}"
+      register: pgm_check
+      failed_when: pgm_check.object_list | length == 0
+      
+    - name: Collecter informations système avant test
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            CURRENT_TIMESTAMP AS TIMESTAMP,
+            ELAPSED_CPU_USED,
+            ELAPSED_CPU_SHARED,
+            CURRENT_CPU_CAPACITY,
+            CURRENT_PROCESSING_CAPACITY,
+            SYSTEM_ASP_USED
+          FROM QSYS2.SYSTEM_STATUS_INFO
+      register: baseline_metrics
+      
+    - name: Afficher métriques de base
+      debug:
+        msg:
+          - "Métriques système avant test:"
+          - "CPU utilisé: {{ baseline_metrics.row[0].ELAPSED_CPU_USED }}%"
+          - "Capacité CPU: {{ baseline_metrics.row[0].CURRENT_CPU_CAPACITY }}"
+          - "ASP utilisé: {{ baseline_metrics.row[0].SYSTEM_ASP_USED }}%"
+    
+    - name: Soumettre les jobs de stress
+      ibm.power_ibmi.ibmi_cl_command:
+        cmd: >
+          SBMJOB 
+          CMD(CALL PGM({{ target_lib }}/{{ program_name }}) 
+              PARM({{ duration }} '{{ workload_type }}' '{{ log_file }}'))
+          JOB({{ job_prefix }}{{ '%02d' | format(item) }})
+          JOBQ(QBATCH)
+          JOBD(QBATCH)
+      loop: "{{ range(1, num_jobs + 1) | list }}"
+      register: submit_results
+      
+    - name: Afficher jobs soumis
+      debug:
+        msg: "Job {{ item.cmd }} soumis avec succès"
+      loop: "{{ submit_results.results }}"
+      when: item.rc == 0
+      
+    - name: Attendre que les jobs démarrent
+      pause:
+        seconds: 5
+        prompt: "Attente du démarrage des jobs..."
+        
+    - name: Vérifier les jobs actifs
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+            JOB_NAME,
+            JOB_STATUS,
+            FUNCTION,
+            CPU_TIME,
+            ELAPSED_CPU_PERCENTAGE,
+            ELAPSED_TIME
+          FROM TABLE(QSYS2.ACTIVE_JOB_INFO(
+            JOB_NAME_FILTER => '{{ job_prefix }}*'
+          ))
+          ORDER BY JOB_NAME
+      register: active_jobs
+      
+    - name: Afficher jobs actifs
+      debug:
+        msg:
+          - "Jobs de stress actifs: {{ active_jobs.row | length }}"
+          - "{{ active_jobs.row }}"
+      when: active_jobs.row | length > 0
+      
+    - name: Monitorer pendant 30 secondes
+      include_tasks: monitor_stress_jobs.yml
+      vars:
+        monitoring_duration: 30
+        check_interval: 10
+      when: duration > 30
+      
+    - name: Résumé de l'exécution
+      debug:
+        msg:
+          - "=========================================="
+          - "Tests de stress lancés avec succès"
+          - "=========================================="
+          - "Jobs soumis: {{ num_jobs }}"
+          - "Jobs actifs: {{ active_jobs.row | length }}"
+          - "Durée prévue: {{ duration }} secondes"
+          - "Fin estimée: {{ (ansible_date_time.epoch | int + duration) | to_datetime }}"
+          - "=========================================="
+          - "Pour monitorer:"
+          - "  WRKACTJOB JOB({{ job_prefix }}*)"
+          - "  ansible-playbook monitor_cpustress_v2.yml"
+          - "=========================================="
+
+# ==============================================================================
+# Tâches de monitoring (incluses)
+# ==============================================================================
+- name: Tâches de monitoring
+  hosts: ibmi_servers
+  gather_facts: no
+  tasks: []
+  # Placeholder pour les tâches de monitoring
+
+# Made with Bob

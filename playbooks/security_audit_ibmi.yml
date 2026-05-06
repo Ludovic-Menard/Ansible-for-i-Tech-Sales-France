@@ -1,0 +1,408 @@
+---
+# ==============================================================================
+# Playbook: Audit de Sécurité Complet IBM i
+# Description: Effectue un audit de sécurité complet et génère un rapport
+# Usage: ansible-playbook security_audit_ibmi.yml
+# ==============================================================================
+
+- name: Audit de Sécurité IBM i
+  hosts: ibmi_servers
+  gather_facts: yes
+  
+  vars:
+    report_dir: "/tmp/security_audit"
+    report_timestamp: "{{ ansible_date_time.iso8601_basic_short }}"
+    report_file: "{{ report_dir }}/security_audit_{{ inventory_hostname }}_{{ report_timestamp }}.html"
+    
+  tasks:
+    - name: Créer le répertoire de rapport
+      file:
+        path: "{{ report_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: yes
+      
+    - name: Afficher début de l'audit
+      debug:
+        msg:
+          - "=========================================="
+          - "Audit de Sécurité IBM i"
+          - "=========================================="
+          - "Serveur: {{ inventory_hostname }}"
+          - "Date: {{ ansible_date_time.iso8601 }}"
+          - "=========================================="
+    
+    # ==========================================================================
+    # 1. CONFIGURATION SYSTÈME
+    # ==========================================================================
+    
+    - name: 1.1 - Vérifier le niveau de sécurité (QSECURITY)
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              SYSTEM_VALUE_NAME,
+              CURRENT_NUMERIC_VALUE AS SECURITY_LEVEL,
+              CASE 
+                  WHEN CURRENT_NUMERIC_VALUE >= 50 THEN 'EXCELLENT'
+                  WHEN CURRENT_NUMERIC_VALUE = 40 THEN 'BON'
+                  WHEN CURRENT_NUMERIC_VALUE = 30 THEN 'MOYEN'
+                  ELSE 'FAIBLE'
+              END AS EVALUATION
+          FROM QSYS2.SYSTEM_VALUE_INFO
+          WHERE SYSTEM_VALUE_NAME = 'QSECURITY'
+      register: security_level
+      
+    - name: 1.2 - Auditer toutes les valeurs système de sécurité
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              SYSTEM_VALUE_NAME,
+              CURRENT_CHARACTER_VALUE,
+              CURRENT_NUMERIC_VALUE,
+              CASE SYSTEM_VALUE_NAME
+                  WHEN 'QSECURITY' THEN 
+                      CASE WHEN CURRENT_NUMERIC_VALUE >= 40 THEN 'PASS' ELSE 'FAIL' END
+                  WHEN 'QPWDEXPITV' THEN 
+                      CASE WHEN CURRENT_NUMERIC_VALUE BETWEEN 30 AND 90 THEN 'PASS' ELSE 'WARN' END
+                  WHEN 'QPWDMINLEN' THEN 
+                      CASE WHEN CURRENT_NUMERIC_VALUE >= 8 THEN 'PASS' ELSE 'FAIL' END
+                  WHEN 'QMAXSIGN' THEN 
+                      CASE WHEN CURRENT_NUMERIC_VALUE <= 3 THEN 'PASS' ELSE 'WARN' END
+                  WHEN 'QRETSVRSEC' THEN 
+                      CASE WHEN CURRENT_CHARACTER_VALUE = '1' THEN 'PASS' ELSE 'FAIL' END
+                  ELSE 'CHECK'
+              END AS STATUS
+          FROM QSYS2.SYSTEM_VALUE_INFO
+          WHERE SYSTEM_VALUE_NAME IN (
+              'QSECURITY', 'QPWDEXPITV', 'QPWDMINLEN', 'QPWDMAXLEN',
+              'QMAXSIGN', 'QRETSVRSEC', 'QLMTSECOFR', 'QPWDRQDDIF',
+              'QPWDLVL', 'QPWDRQDDGT', 'QAUDCTL', 'QAUDLVL'
+          )
+          ORDER BY SYSTEM_VALUE_NAME
+      register: system_values
+      
+    - name: Afficher niveau de sécurité
+      debug:
+        msg: "Niveau de sécurité: {{ security_level.row[0].SECURITY_LEVEL }} - {{ security_level.row[0].EVALUATION }}"
+    
+    # ==========================================================================
+    # 2. UTILISATEURS À RISQUE
+    # ==========================================================================
+    
+    - name: 2.1 - Identifier les utilisateurs avec privilèges élevés
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              AUTHORIZATION_NAME,
+              USER_CLASS_NAME,
+              STATUS,
+              SPECIAL_AUTHORITIES,
+              CASE 
+                  WHEN SPECIAL_AUTHORITIES LIKE '%*ALLOBJ*' THEN 'CRITIQUE'
+                  WHEN SPECIAL_AUTHORITIES LIKE '%*SECADM*' THEN 'ELEVE'
+                  ELSE 'NORMAL'
+              END AS RISK_LEVEL,
+              NO_PASSWORD_INDICATOR,
+              PASSWORD_EXPIRATION_DATE,
+              DAYS_UNTIL_PASSWORD_EXPIRES,
+              SIGN_ON_ATTEMPTS_NOT_VALID,
+              PREVIOUS_SIGNON
+          FROM QSYS2.USER_INFO
+          WHERE (SPECIAL_AUTHORITIES <> '*NONE' OR USER_CLASS_NAME = '*SECOFR')
+            AND STATUS = '*ENABLED'
+          ORDER BY 
+              CASE 
+                  WHEN SPECIAL_AUTHORITIES LIKE '%*ALLOBJ*' THEN 1
+                  WHEN SPECIAL_AUTHORITIES LIKE '%*SECADM*' THEN 2
+                  ELSE 3
+              END
+      register: privileged_users
+      
+    - name: 2.2 - Détecter les comptes à risque
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              AUTHORIZATION_NAME,
+              STATUS,
+              CASE 
+                  WHEN NO_PASSWORD_INDICATOR = 'YES' THEN 'CRITIQUE: Pas de mot de passe'
+                  WHEN PASSWORD_EXPIRATION_DATE < CURRENT_DATE THEN 'CRITIQUE: Mot de passe expiré'
+                  WHEN DAYS_UNTIL_PASSWORD_EXPIRES <= 7 THEN 'ATTENTION: Expire bientôt'
+                  WHEN SIGN_ON_ATTEMPTS_NOT_VALID > 0 THEN 'ATTENTION: Tentatives échouées'
+                  ELSE 'OK'
+              END AS SECURITY_STATUS,
+              NO_PASSWORD_INDICATOR,
+              PASSWORD_EXPIRATION_DATE,
+              DAYS_UNTIL_PASSWORD_EXPIRES,
+              SIGN_ON_ATTEMPTS_NOT_VALID,
+              SPECIAL_AUTHORITIES
+          FROM QSYS2.USER_INFO
+          WHERE STATUS = '*ENABLED'
+            AND (
+                NO_PASSWORD_INDICATOR = 'YES'
+                OR PASSWORD_EXPIRATION_DATE < CURRENT_DATE
+                OR DAYS_UNTIL_PASSWORD_EXPIRES <= 7
+                OR SIGN_ON_ATTEMPTS_NOT_VALID > 0
+            )
+          ORDER BY 
+              CASE 
+                  WHEN NO_PASSWORD_INDICATOR = 'YES' THEN 1
+                  WHEN PASSWORD_EXPIRATION_DATE < CURRENT_DATE THEN 2
+                  ELSE 3
+              END
+      register: risky_accounts
+      
+    - name: 2.3 - Vérifier les profils IBM par défaut
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              AUTHORIZATION_NAME,
+              STATUS,
+              USER_CLASS_NAME,
+              SPECIAL_AUTHORITIES,
+              NO_PASSWORD_INDICATOR,
+              CASE 
+                  WHEN STATUS = '*DISABLED' THEN 'OK: Désactivé'
+                  WHEN NO_PASSWORD_INDICATOR = 'YES' THEN 'CRITIQUE: Actif sans mot de passe'
+                  ELSE 'ATTENTION: Actif'
+              END AS SECURITY_STATUS
+          FROM QSYS2.USER_INFO
+          WHERE AUTHORIZATION_NAME IN (
+              'QSECOFR', 'QSYSOPR', 'QPGMR', 'QSRV', 'QTCP',
+              'QUSER', 'QAUTPROF', 'QDBSHR', 'QDOC'
+          )
+          ORDER BY 
+              CASE 
+                  WHEN STATUS = '*ENABLED' AND NO_PASSWORD_INDICATOR = 'YES' THEN 1
+                  WHEN STATUS = '*ENABLED' THEN 2
+                  ELSE 3
+              END
+      register: default_profiles
+      
+    - name: 2.4 - Identifier les utilisateurs inactifs
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              AUTHORIZATION_NAME,
+              STATUS,
+              PREVIOUS_SIGNON,
+              DAYS_BETWEEN(PREVIOUS_SIGNON, CURRENT_DATE) AS DAYS_INACTIVE,
+              SPECIAL_AUTHORITIES,
+              CASE 
+                  WHEN DAYS_BETWEEN(PREVIOUS_SIGNON, CURRENT_DATE) > 180 THEN 'CRITIQUE: > 6 mois'
+                  WHEN DAYS_BETWEEN(PREVIOUS_SIGNON, CURRENT_DATE) > 90 THEN 'ATTENTION: > 3 mois'
+                  ELSE 'OK'
+              END AS ACTIVITY_STATUS
+          FROM QSYS2.USER_INFO
+          WHERE STATUS = '*ENABLED'
+            AND PREVIOUS_SIGNON IS NOT NULL
+            AND DAYS_BETWEEN(PREVIOUS_SIGNON, CURRENT_DATE) > 90
+          ORDER BY DAYS_BETWEEN(PREVIOUS_SIGNON, CURRENT_DATE) DESC
+          FETCH FIRST 50 ROWS ONLY
+      register: inactive_users
+      
+    # ==========================================================================
+    # 3. AUTORISATIONS
+    # ==========================================================================
+    
+    - name: 3.1 - Objets avec autorisation *PUBLIC excessive
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              SYSTEM_OBJECT_SCHEMA,
+              SYSTEM_OBJECT_NAME,
+              OBJECT_TYPE,
+              OBJECT_AUTHORITY,
+              CASE 
+                  WHEN OBJECT_AUTHORITY IN ('*ALL', '*CHANGE') THEN 'CRITIQUE'
+                  WHEN OBJECT_AUTHORITY = '*USE' THEN 'ATTENTION'
+                  ELSE 'OK'
+              END AS RISK_LEVEL
+          FROM QSYS2.OBJECT_PRIVILEGES
+          WHERE AUTHORIZATION_NAME = '*PUBLIC'
+            AND OBJECT_AUTHORITY IN ('*ALL', '*CHANGE', '*USE')
+            AND SYSTEM_OBJECT_SCHEMA NOT IN ('QSYS', 'QSYS2', 'QUSRSYS')
+          ORDER BY 
+              CASE OBJECT_AUTHORITY
+                  WHEN '*ALL' THEN 1
+                  WHEN '*CHANGE' THEN 2
+                  ELSE 3
+              END
+          FETCH FIRST 100 ROWS ONLY
+      register: public_objects
+      
+    - name: 3.2 - Programmes adoptant des autorités
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              OBJLIB,
+              OBJNAME,
+              OBJOWNER,
+              USER_PROFILE,
+              CASE 
+                  WHEN OBJOWNER IN ('QSECOFR', 'QSYS') THEN 'CRITIQUE: Adoption QSECOFR/QSYS'
+                  ELSE 'ATTENTION: Adoption propriétaire'
+              END AS RISK_LEVEL,
+              OBJCREATED
+          FROM TABLE(QSYS2.OBJECT_STATISTICS('*ALL', '*PGM'))
+          WHERE USER_PROFILE = '*OWNER'
+            AND OBJLIB NOT IN ('QSYS', 'QSYS2')
+          ORDER BY 
+              CASE WHEN OBJOWNER IN ('QSECOFR', 'QSYS') THEN 1 ELSE 2 END
+          FETCH FIRST 50 ROWS ONLY
+      register: adopted_programs
+      
+    # ==========================================================================
+    # 4. AUDIT ET JOURNALISATION
+    # ==========================================================================
+    
+    - name: 4.1 - Vérifier la configuration de l'audit
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              SYSTEM_VALUE_NAME,
+              CURRENT_CHARACTER_VALUE,
+              CASE SYSTEM_VALUE_NAME
+                  WHEN 'QAUDCTL' THEN 
+                      CASE WHEN CURRENT_CHARACTER_VALUE LIKE '%*AUDLVL%' THEN 'PASS' ELSE 'FAIL' END
+                  WHEN 'QAUDLVL' THEN 
+                      CASE WHEN CURRENT_CHARACTER_VALUE <> '*NONE' THEN 'PASS' ELSE 'FAIL' END
+                  ELSE 'CHECK'
+              END AS STATUS
+          FROM QSYS2.SYSTEM_VALUE_INFO
+          WHERE SYSTEM_VALUE_NAME IN ('QAUDCTL', 'QAUDLVL', 'QAUDENDACN', 'QCRTOBJAUD')
+      register: audit_config
+      
+    # ==========================================================================
+    # 5. SESSIONS ACTIVES
+    # ==========================================================================
+    
+    - name: 5.1 - Lister les sessions actives
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          SELECT 
+              JOB_NAME,
+              AUTHORIZATION_NAME,
+              JOB_TYPE,
+              SUBSYSTEM,
+              CLIENT_IP_ADDRESS,
+              JOB_ENTERED_SYSTEM_TIME,
+              CASE 
+                  WHEN AUTHORIZATION_NAME IN ('QSECOFR', 'QSYSOPR') THEN 'ATTENTION: Utilisateur privilégié'
+                  ELSE 'Normal'
+              END AS SESSION_TYPE
+          FROM TABLE(QSYS2.ACTIVE_JOB_INFO())
+          WHERE JOB_TYPE IN ('INT', 'BCH')
+            AND JOB_STATUS = 'ACTIVE'
+          ORDER BY JOB_ENTERED_SYSTEM_TIME DESC
+          FETCH FIRST 50 ROWS ONLY
+      register: active_sessions
+      
+    # ==========================================================================
+    # 6. SCORE DE SÉCURITÉ
+    # ==========================================================================
+    
+    - name: 6.1 - Calculer le score de sécurité global
+      ibm.power_ibmi.ibmi_sql_query:
+        sql: |
+          WITH SECURITY_CHECKS AS (
+              SELECT 'Niveau sécurité' AS CHECK_NAME,
+                     CASE WHEN CURRENT_NUMERIC_VALUE >= 40 THEN 1 ELSE 0 END AS PASSED
+              FROM QSYS2.SYSTEM_VALUE_INFO WHERE SYSTEM_VALUE_NAME = 'QSECURITY'
+              UNION ALL
+              SELECT 'Expiration mot de passe',
+                     CASE WHEN CURRENT_NUMERIC_VALUE BETWEEN 30 AND 90 THEN 1 ELSE 0 END
+              FROM QSYS2.SYSTEM_VALUE_INFO WHERE SYSTEM_VALUE_NAME = 'QPWDEXPITV'
+              UNION ALL
+              SELECT 'Longueur min mot de passe',
+                     CASE WHEN CURRENT_NUMERIC_VALUE >= 8 THEN 1 ELSE 0 END
+              FROM QSYS2.SYSTEM_VALUE_INFO WHERE SYSTEM_VALUE_NAME = 'QPWDMINLEN'
+              UNION ALL
+              SELECT 'Audit activé',
+                     CASE WHEN CURRENT_CHARACTER_VALUE <> '*NONE' THEN 1 ELSE 0 END
+              FROM QSYS2.SYSTEM_VALUE_INFO WHERE SYSTEM_VALUE_NAME = 'QAUDLVL'
+              UNION ALL
+              SELECT 'Restauration sécurité',
+                     CASE WHEN CURRENT_CHARACTER_VALUE = '1' THEN 1 ELSE 0 END
+              FROM QSYS2.SYSTEM_VALUE_INFO WHERE SYSTEM_VALUE_NAME = 'QRETSVRSEC'
+          )
+          SELECT 
+              CHECK_NAME,
+              CASE WHEN PASSED = 1 THEN 'PASS' ELSE 'FAIL' END AS STATUS,
+              PASSED
+          FROM SECURITY_CHECKS
+          UNION ALL
+          SELECT 
+              '--- SCORE GLOBAL ---',
+              CAST(ROUND((SUM(PASSED) * 100.0 / COUNT(*)), 0) AS VARCHAR(10)) || '%',
+              SUM(PASSED)
+          FROM SECURITY_CHECKS
+      register: security_score
+      
+    # ==========================================================================
+    # 7. AFFICHAGE DES RÉSULTATS
+    # ==========================================================================
+    
+    - name: Afficher résumé de l'audit
+      debug:
+        msg:
+          - "=========================================="
+          - "RÉSUMÉ DE L'AUDIT DE SÉCURITÉ"
+          - "=========================================="
+          - "Serveur: {{ inventory_hostname }}"
+          - "Niveau de sécurité: {{ security_level.row[0].SECURITY_LEVEL }}"
+          - "Utilisateurs privilégiés: {{ privileged_users.row | length }}"
+          - "Comptes à risque: {{ risky_accounts.row | length }}"
+          - "Profils par défaut actifs: {{ default_profiles.row | length }}"
+          - "Utilisateurs inactifs: {{ inactive_users.row | length }}"
+          - "Objets *PUBLIC: {{ public_objects.row | length }}"
+          - "Programmes adoptant: {{ adopted_programs.row | length }}"
+          - "Sessions actives: {{ active_sessions.row | length }}"
+          - "=========================================="
+          - "Score de sécurité: Voir détails ci-dessous"
+          - "=========================================="
+    
+    - name: Afficher score de sécurité
+      debug:
+        var: security_score.row
+        
+    - name: Générer rapport HTML
+      template:
+        src: security_audit_report.html.j2
+        dest: "{{ report_file }}"
+      delegate_to: localhost
+      vars:
+        audit_data:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          hostname: "{{ inventory_hostname }}"
+          security_level: "{{ security_level.row }}"
+          system_values: "{{ system_values.row }}"
+          privileged_users: "{{ privileged_users.row }}"
+          risky_accounts: "{{ risky_accounts.row }}"
+          default_profiles: "{{ default_profiles.row }}"
+          inactive_users: "{{ inactive_users.row }}"
+          public_objects: "{{ public_objects.row }}"
+          adopted_programs: "{{ adopted_programs.row }}"
+          audit_config: "{{ audit_config.row }}"
+          active_sessions: "{{ active_sessions.row }}"
+          security_score: "{{ security_score.row }}"
+      ignore_errors: yes
+      
+    - name: Résultat final
+      debug:
+        msg:
+          - "=========================================="
+          - "Audit de sécurité terminé"
+          - "=========================================="
+          - "Rapport généré: {{ report_file }}"
+          - "=========================================="
+          - "Actions recommandées:"
+          - "1. Vérifier les comptes à risque"
+          - "2. Désactiver les profils par défaut"
+          - "3. Restreindre les autorisations *PUBLIC"
+          - "4. Activer l'audit si désactivé"
+          - "5. Désactiver les comptes inactifs"
+          - "=========================================="
+
+# Made with Bob
